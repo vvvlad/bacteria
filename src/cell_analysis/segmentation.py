@@ -5,10 +5,21 @@ Two methods available:
   touching/adjacent cells and ignoring halos/horns.
 - Classical: invert + blur + peak detection + watershed + circularity filter.
   Faster, no model download, but more false positives.
+
+See docs/detection_tuning.md for parameter tuning notes, method comparison,
+benchmarks, and known limitations.
 """
+
+import logging
+import warnings
 
 import numpy as np
 from skimage import measure
+
+# Suppress noisy Cellpose/PyTorch warnings
+logging.getLogger("cellpose.models").setLevel(logging.ERROR)
+logging.getLogger("cellpose.dynamics").setLevel(logging.ERROR)
+warnings.filterwarnings("ignore", message="Sparse invariant checks")
 
 
 # ---------------------------------------------------------------------------
@@ -19,8 +30,11 @@ def detect_cells_frame(
     frame: np.ndarray,
     diameter: float | None = None,
     min_area: int = 200,
-    min_circularity: float = 0.3,
+    min_circularity: float = 0.7,
+    min_contrast: float = 1550,
+    exclude_edges: bool = True,
     gpu: bool = False,
+    resample: bool = False,
     _model=None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Detect round cells in a single phase-contrast frame using Cellpose.
@@ -38,8 +52,16 @@ def detect_cells_frame(
         Reject regions smaller than this (debris).
     min_circularity : float
         Reject non-round shapes (0-1, where 1.0 = perfect circle).
+    min_contrast : float
+        Minimum intensity std-dev within the cell region. Rejects
+        out-of-focus / low-contrast cells in aggregates.
+    exclude_edges : bool
+        Reject cells whose bounding box touches the frame border.
     gpu : bool
-        Use GPU acceleration if available.
+        Use GPU acceleration if available (routes to MPS on Apple Silicon).
+    resample : bool
+        If True, resample masks to original image size (slower but more
+        precise boundaries). False is much faster with minimal quality loss.
     _model : CellposeModel or None
         Pre-loaded model instance (avoids reloading per frame).
 
@@ -58,15 +80,32 @@ def detect_cells_frame(
     # Invert: dark cells become bright for Cellpose
     inverted = frame.max() - frame
 
-    masks, _flows, _styles = _model.eval(inverted, diameter=diameter)
+    masks, _flows, _styles = _model.eval(inverted, diameter=diameter, resample=resample)
 
-    # Filter by area and circularity
-    props = measure.regionprops(masks)
+    h, w = frame.shape
+
+    # resample=False returns masks at the model's internal resolution;
+    # resize back to original frame size so masks and frame align.
+    if masks.shape != frame.shape:
+        from skimage.transform import resize
+        masks = resize(
+            masks, (h, w), order=0, preserve_range=True, anti_aliasing=False,
+        ).astype(masks.dtype)
+
+    props = measure.regionprops(masks, intensity_image=frame)
     good_centroids = []
     good_labels = set()
     for p in props:
+        # Skip cells cut off at the frame border
+        if exclude_edges:
+            r0, c0, r1, c1 = p.bbox
+            if r0 == 0 or c0 == 0 or r1 == h or c1 == w:
+                continue
+
         circ = 4 * np.pi * p.area / (p.perimeter ** 2 + 1e-8)
-        if p.area >= min_area and circ >= min_circularity:
+        contrast = float(frame[masks == p.label].std())
+
+        if p.area >= min_area and circ >= min_circularity and contrast >= min_contrast:
             good_centroids.append(p.centroid)
             good_labels.add(p.label)
 
@@ -84,8 +123,11 @@ def detect_cells_stack(
     stack: np.ndarray,
     diameter: float | None = None,
     min_area: int = 200,
-    min_circularity: float = 0.3,
+    min_circularity: float = 0.7,
+    min_contrast: float = 1550,
+    exclude_edges: bool = True,
     gpu: bool = False,
+    resample: bool = False,
 ) -> tuple[list[np.ndarray], np.ndarray]:
     """Detect cells in every frame of a time-lapse stack using Cellpose.
 
@@ -95,7 +137,7 @@ def detect_cells_stack(
     ----------
     stack : np.ndarray
         Image stack with shape (T, Y, X).
-    diameter, min_area, min_circularity, gpu
+    diameter, min_area, min_circularity, min_contrast, exclude_edges, gpu, resample
         See detect_cells_frame.
 
     Returns
@@ -118,7 +160,10 @@ def detect_cells_stack(
             diameter=diameter,
             min_area=min_area,
             min_circularity=min_circularity,
+            min_contrast=min_contrast,
+            exclude_edges=exclude_edges,
             gpu=gpu,
+            resample=resample,
             _model=model,
         )
         centroids_per_frame.append(centroids)

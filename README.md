@@ -275,6 +275,8 @@ bacteria/
 ├── notebooks/
 │   └── analysis.ipynb # Main analysis notebook
 ├── results/           # Exported CSVs (not tracked by git)
+├── scripts/
+│   └── diagnostic_overlay.py  # Visual debugging of detection filters
 ├── src/
 │   └── cell_analysis/
 │       ├── __init__.py
@@ -314,6 +316,123 @@ The pipeline exports two CSV files to `results/`:
 
 - **`tracked_cells.csv`** — per-cell, per-frame data including track ID, centroid coordinates, and area
 - **`track_statistics.csv`** — per-track summary: lifetime, mean area, disappearance flag
+
+## Diagnostic Overlay
+
+The `scripts/diagnostic_overlay.py` script generates visual overlays that show which cells were **accepted** and which were **rejected** by the detection filters, along with the reason each cell was rejected. This is the main tool for tuning detection parameters.
+
+### What it produces
+
+Two images saved to `results/`:
+
+| File | Description |
+|------|-------------|
+| `diagnostic_full.png` | Full frame — accepted cells marked with **red X**, rejected cells marked with **cyan O** and labeled with the rejection reason |
+| `diagnostic_crops.png` | Six zoomed crop regions for close inspection of individual cells and their rejection labels |
+
+### Basic usage
+
+Run with the current default parameters:
+
+```bash
+uv run python scripts/diagnostic_overlay.py
+```
+
+### Overriding detection parameters
+
+Pass any detection parameter as a CLI flag to test different thresholds without editing code:
+
+```bash
+# Relax contrast filter to accept more faded cells
+uv run python scripts/diagnostic_overlay.py --min_contrast 1400
+
+# Lower area threshold and relax circularity
+uv run python scripts/diagnostic_overlay.py --min_area 200 --min_circularity 0.5
+
+# Combine multiple overrides
+uv run python scripts/diagnostic_overlay.py --min_area 200 --min_contrast 1400 --min_circularity 0.5
+```
+
+### Inspecting a specific frame
+
+By default the script analyses frame 0. Use `--frame` to pick another:
+
+```bash
+uv run python scripts/diagnostic_overlay.py --frame 12
+```
+
+### Custom crop regions
+
+Zoom into specific areas of interest by passing `--crops` with `Y0:Y1:X0:X1` coordinates (up to 6 regions):
+
+```bash
+uv run python scripts/diagnostic_overlay.py --crops 150:400:250:550 400:650:700:1000
+```
+
+If omitted, six crops are auto-generated spread across the frame.
+
+### Using a different stack
+
+```bash
+uv run python scripts/diagnostic_overlay.py --stack path/to/other_stack.tif
+```
+
+### Debugging detection with the overlay
+
+The overlay is designed for an iterative tuning workflow:
+
+1. **Run the script** with current defaults and open `results/diagnostic_full.png`.
+
+2. **Look at the cyan circles.** Each rejected cell has a label explaining why it was rejected:
+   - `edge` — cell touches the frame border (filtered by `--exclude_edges`)
+   - `area=N` — cell area is below `--min_area`
+   - `circ=N.NN` — circularity is below `--min_circularity`
+   - `c=N` — intensity contrast (std-dev) is below `--min_contrast`
+   - A cell can have **multiple reasons** (e.g. `area=180, circ=0.52`)
+
+3. **Decide if rejected cells should be accepted.** Open `results/diagnostic_crops.png` for a closer look. If you see real cells being rejected, relax the corresponding threshold:
+   - Too many real cells rejected for contrast? Lower `--min_contrast`
+   - Small but valid cells being dropped? Lower `--min_area`
+   - Slightly elongated cells being rejected? Lower `--min_circularity`
+
+4. **Re-run with adjusted parameters** and compare the new overlay:
+   ```bash
+   uv run python scripts/diagnostic_overlay.py --min_contrast 1400
+   ```
+
+5. **Check for false positives.** If relaxing a threshold lets in debris or halos (red X on non-cells), tighten the threshold back.
+
+6. **Once satisfied**, update `DETECT_PARAMS` in `notebooks/analysis.ipynb` with the tuned values and re-run the full pipeline.
+
+The script also prints a rejection reason summary to the terminal:
+
+```
+Accepted: 349, Rejected: 72
+
+Rejection reasons (cells can have multiple):
+  edge: 38
+  c: 22
+  area: 15
+  circ: 8
+```
+
+This tells you at a glance which filter is rejecting the most cells, helping you prioritise which threshold to adjust first.
+
+### All CLI options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--stack` | `data/raw/Gradient-0011.zvi  Ch0.tif` | Path to the TIFF stack |
+| `--frame` | `0` | Frame index to analyse |
+| `--outdir` | `results` | Output directory for PNG files |
+| `--diameter` | `32` | Cellpose cell diameter |
+| `--min_area` | `300` | Minimum cell area in pixels |
+| `--min_circularity` | `0.7` | Minimum circularity (0-1) |
+| `--min_contrast` | `1550` | Minimum intensity std-dev |
+| `--exclude_edges` / `--no_exclude_edges` | `True` | Include/exclude border cells |
+| `--gpu` / `--no_gpu` | `True` | Enable/disable GPU |
+| `--resample` | `False` | Resample masks (slower, more precise boundaries) |
+| `--crops` | auto | Custom crop regions as `Y0:Y1:X0:X1` (up to 6) |
 
 ## Alternative: Running with JupyterLab
 
