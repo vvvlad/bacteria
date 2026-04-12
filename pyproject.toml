@@ -1,0 +1,32 @@
+[project]
+name = "cell-analysis"
+version = "0.1.0"
+description = "Napari-based pipeline for bacterial cell tracking and fluorescence analysis"
+requires-python = ">=3.11"
+
+dependencies = [
+    "napari[all]>=0.5",
+    "cellpose>=3.0",
+    "numpy",
+    "scipy",
+    "scikit-image",
+    "pandas",
+    "matplotlib",
+    "seaborn",
+    "tifffile",
+    "trackpy",
+    "btrack",
+    "laptrack",
+    "jupyterlab",
+    "ipywidgets",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "ruff"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cell_analysis"]

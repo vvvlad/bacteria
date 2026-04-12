@@ -1,0 +1,31 @@
+# Data (often large TIFFs)
+data/raw/
+data/processed/
+results/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# uv
+.python-version
