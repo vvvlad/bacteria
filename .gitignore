@@ -1,7 +1,6 @@
 # Data (often large TIFFs)
 data/raw/
 data/processed/
-results/
 
 # Python
 __pycache__/
