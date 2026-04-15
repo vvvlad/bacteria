@@ -304,11 +304,15 @@ The notebook defines tunable parameters at the top:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `diameter` | 32 | Median cell diameter in pixels |
-| `min_area` | 200 | Minimum cell area (rejects debris) |
+| `min_area` | 300 | Minimum cell area (rejects debris) |
 | `min_circularity` | 0.7 | Minimum circularity (1.0 = perfect circle) |
-| `gpu` | False | Enable CUDA GPU acceleration |
+| `min_contrast` | 1550 | Minimum intensity std-dev (rejects faded cells) |
+| `gpu` | True | Enable GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA) |
 | `search_range` | 30.0 | Max cell displacement between frames (pixels) |
 | `memory` | 3 | Frames a cell can disappear before breaking the track |
+| `TRIM_FRAMES` | 2 | Initial frames to discard before detection (e.g. out-of-focus frames) |
+| `MERGE_MAX_DISTANCE` | 15.0 | Max pixels between track end/start to merge fragments |
+| `MERGE_MAX_GAP` | 18 | Max frame gap for fragment merging |
 
 ## Output
 
