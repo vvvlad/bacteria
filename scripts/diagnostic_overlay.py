@@ -62,7 +62,7 @@ def parse_args():
     g.add_argument("--diameter", type=float, default=32)
     g.add_argument("--min_area", type=int, default=300)
     g.add_argument("--min_circularity", type=float, default=0.7)
-    g.add_argument("--min_contrast", type=float, default=1550)
+    g.add_argument("--min_contrast", type=float, default=1250)
     g.add_argument("--exclude_edges", type=bool, default=True)
     g.add_argument("--no_exclude_edges", action="store_true",
                     help="Include edge cells")

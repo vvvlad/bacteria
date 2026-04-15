@@ -9,8 +9,8 @@ Full frame with accepted detections (red X) and rejected detections (cyan O):
 
 ![Overview](images/overview_accepted_rejected.png)
 
-Cellpose finds ~423 raw detections. After post-filtering: ~349 accepted, ~74
-rejected. Most rejections are for low contrast or edge location.
+Cellpose finds ~423 raw detections. After post-filtering: ~371 accepted, ~52
+rejected. Most rejections are for edge location, area, or circularity.
 
 ---
 
@@ -65,7 +65,7 @@ Circularity = 4 * pi * area / perimeter^2 (1.0 = perfect circle).
 The cyan circle marks an elongated object (circ=0.41) correctly rejected.
 Round cells nearby are accepted (red X).
 
-### min_contrast = 1550
+### min_contrast = 1250
 
 Measured as intensity std-dev within the cell mask.
 
@@ -73,20 +73,28 @@ Measured as intensity std-dev within the cell mask.
 
 Left to right: the same crop at three contrast thresholds. Cyan circles show
 rejected cells. At 1700 (right), several visually valid cells are lost. At
-1400 (left), nearly everything passes. 1550 (center) is the chosen middle
-ground.
+1400 (left), nearly everything passes.
 
-| Threshold | Accepted (frame 0) | Notes |
-|-----------|---------------------|-------|
-| 1400 | 364 | Only truly faded cells rejected (~10) |
-| **1550** | **~354** | **Good middle ground** |
-| 1700 | 326 | Too strict — rejects 38 visually valid cells |
+#### Tuning history
+
+Originally set to 1550. Lowered to 1250 after tracking analysis revealed
+~22 real cells per frame flickering around the 1550 threshold. These cells
+were detected in some frames but not others, creating spurious "new" track
+IDs (359-377) and fragmenting track histories. Diagnostic sweep results:
+
+| Threshold | Accepted (frame 0) | Contrast rejections | Notes |
+|-----------|---------------------|---------------------|-------|
+| 1100 | 372 | 6 | Diminishing returns vs 1250 |
+| **1250** | **371** | **10** | **Recovers borderline cells, still rejects truly faded** |
+| 1400 | 364 | 26 | Original conservative candidate |
+| 1550 | 349 | 44 | Previous default — too strict |
+| 1700 | 326 | — | Far too strict |
 
 Distribution (cells passing area + circ + edge filters):
 - Median: ~2000
 - P5: ~1483
 - P10: ~1638
-- Truly faded/out-of-focus: <1400 (only ~10 cells)
+- Truly faded/out-of-focus: <1100 (only ~6 cells)
 
 `min_contrast` works in tandem with `min_area` — small faded blobs fail one
 or both filters.
