@@ -221,3 +221,128 @@ def compute_track_stats(tracked: pd.DataFrame) -> pd.DataFrame:
     stats["disappeared"] = stats["last_frame"] < last_frame
 
     return stats
+
+
+def detect_bad_frames(
+    detections: pd.DataFrame,
+    z_threshold: float = 3.5,
+) -> tuple[list[int], pd.DataFrame]:
+    """Flag frames with anomalous detection statistics.
+
+    Computes per-frame cell count, mean area, and area IQR, then flags
+    frames whose frame-to-frame deltas are outliers using MAD-based
+    modified Z-scores.  Frame 0 is evaluated using absolute Z-scores
+    against the full population (no delta available).
+
+    Parameters
+    ----------
+    detections : pd.DataFrame
+        Output of :func:`labels_to_detections`.  Must have columns
+        ``frame`` and ``area``.
+    z_threshold : float
+        Modified Z-score threshold for flagging.  Default 3.5 follows
+        the Iglewicz & Hoaglin recommendation for MAD-based outlier
+        detection.
+
+    Returns
+    -------
+    bad_frames : list[int]
+        Frame indices flagged as anomalous.
+    diagnostics : pd.DataFrame
+        One row per frame with columns: ``frame``, ``cell_count``,
+        ``mean_area``, ``iqr_area``, ``z_count``, ``z_area``,
+        ``z_iqr``, ``flagged``, ``reasons``.
+    """
+    if detections.empty:
+        return [], pd.DataFrame(
+            columns=["frame", "cell_count", "mean_area", "iqr_area",
+                     "z_count", "z_area", "z_iqr", "flagged", "reasons"])
+
+    # --- Per-frame statistics ---
+    grouped = detections.groupby("frame")
+    stats = pd.DataFrame({
+        "frame": sorted(detections["frame"].unique()),
+    })
+    counts = grouped.size().rename("cell_count")
+    means = grouped["area"].mean().rename("mean_area")
+    q1 = grouped["area"].quantile(0.25)
+    q3 = grouped["area"].quantile(0.75)
+    iqrs = (q3 - q1).rename("iqr_area")
+
+    stats = stats.merge(counts, left_on="frame", right_index=True)
+    stats = stats.merge(means, left_on="frame", right_index=True)
+    stats = stats.merge(iqrs, left_on="frame", right_index=True)
+
+    n_frames = len(stats)
+
+    # --- Modified Z-scores on frame-to-frame deltas ---
+    def _mad_z(series):
+        """Compute MAD-based modified Z-scores. Returns array of same length."""
+        median = np.median(series)
+        mad = np.median(np.abs(series - median))
+        if mad == 0:
+            return np.zeros_like(series, dtype=float)
+        return 0.6745 * (series - median) / mad
+
+    # Deltas (frame-to-frame changes) — undefined for frame 0
+    d_area = np.diff(stats["mean_area"].values)
+    d_iqr = np.diff(stats["iqr_area"].values)
+
+    # Z-scores for deltas (frames 1..N-1)
+    z_area_delta = _mad_z(d_area) if len(d_area) > 0 else np.array([])
+    z_iqr_delta = _mad_z(d_iqr) if len(d_iqr) > 0 else np.array([])
+
+    # Cell count uses absolute Z-scores for ALL frames — this naturally
+    # handles "recovery" frames (a frame returning to normal after a bad
+    # frame has a normal absolute count, so it won't be flagged).
+    z_count = _mad_z(stats["cell_count"].values.astype(float))
+
+    # Area and IQR: absolute Z for frame 0, delta Z for frames 1+
+    z_area = np.zeros(n_frames)
+    z_iqr = np.zeros(n_frames)
+
+    z_area_abs = _mad_z(stats["mean_area"].values)
+    z_iqr_abs = _mad_z(stats["iqr_area"].values)
+    z_area[0] = z_area_abs[0]
+    z_iqr[0] = z_iqr_abs[0]
+
+    if len(z_area_delta) > 0:
+        z_area[1:] = z_area_delta
+        z_iqr[1:] = z_iqr_delta
+
+    stats["z_count"] = z_count
+    stats["z_area"] = z_area
+    stats["z_iqr"] = z_iqr
+
+    # --- Flag frames where ANY signal exceeds threshold ---
+    # For area/IQR on frames 1+, require both delta Z AND absolute Z to
+    # exceed thresholds — delta Z alone is too sensitive to sampling noise.
+    flagged = np.zeros(n_frames, dtype=bool)
+    reasons_list = []
+    for i in range(n_frames):
+        r = []
+        if abs(z_count[i]) > z_threshold:
+            r.append(f"count(z={z_count[i]:.1f})")
+        if abs(z_area[i]) > z_threshold:
+            if i == 0 or abs(z_area_abs[i]) > z_threshold / 2:
+                r.append(f"area(z={z_area[i]:.1f})")
+        if abs(z_iqr[i]) > z_threshold:
+            if i == 0 or abs(z_iqr_abs[i]) > z_threshold / 2:
+                r.append(f"iqr(z={z_iqr[i]:.1f})")
+        if r:
+            flagged[i] = True
+        reasons_list.append(", ".join(r))
+
+    stats["flagged"] = flagged
+    stats["reasons"] = reasons_list
+
+    bad_frames = stats.loc[stats["flagged"], "frame"].tolist()
+
+    if bad_frames:
+        print(f"Frame gating: {len(bad_frames)} frame(s) flagged: {bad_frames}")
+        for _, row in stats[stats["flagged"]].iterrows():
+            print(f"  Frame {int(row['frame'])}: {row['reasons']}")
+    else:
+        print("Frame gating: no anomalous frames detected")
+
+    return bad_frames, stats

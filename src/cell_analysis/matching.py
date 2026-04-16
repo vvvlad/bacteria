@@ -2,7 +2,7 @@
 
 import numpy as np
 import pandas as pd
-from scipy import ndimage
+from scipy import ndimage, stats
 from scipy.spatial.distance import cdist
 
 
@@ -81,7 +81,7 @@ def measure_fluorescence(
     fluor_stack: np.ndarray,
     cell_labels: np.ndarray,
 ) -> pd.DataFrame:
-    """Measure fluorescence intensity per cell per frame.
+    """Measure fluorescence intensity and distribution metrics per cell per frame.
 
     Parameters
     ----------
@@ -93,24 +93,114 @@ def measure_fluorescence(
     Returns
     -------
     pd.DataFrame
-        Columns: frame, cell_id, mean_intensity, total_intensity, max_intensity
+        Columns: frame, cell_id, mean_intensity, total_intensity,
+        min_intensity, max_intensity, std_intensity, cv, skewness,
+        kurtosis, nnrm
     """
     records = []
     for t in range(fluor_stack.shape[0]):
         frame = fluor_stack[t]
         labels = cell_labels[t]
-        cell_ids = np.unique(labels)
-        cell_ids = cell_ids[cell_ids != 0]
+        slices = ndimage.find_objects(labels)
 
-        for cid in cell_ids:
-            mask = labels == cid
-            pixels = frame[mask]
+        for cid_idx, sl in enumerate(slices):
+            if sl is None:
+                continue
+            cid = cid_idx + 1
+            crop_labels = labels[sl]
+            crop_frame = frame[sl]
+            mask = crop_labels == cid
+            pixels = crop_frame[mask].astype(np.float64)
+            if pixels.size == 0:
+                continue
+            mean_val = pixels.mean()
+            std_val = pixels.std()
+
+            # CV: coefficient of variation (nucleoid heterogeneity)
+            cv = float(std_val / mean_val) if mean_val > 0 else 0.0
+
+            # nNRM: KS statistic vs normal with same mean/std
+            # Measures how non-Gaussian the pixel distribution is
+            # (Gough et al. 2014, PLOS ONE)
+            if std_val > 0:
+                ks_stat, _ = stats.kstest(pixels, "norm", args=(mean_val, std_val))
+                nnrm = float(ks_stat)
+            else:
+                nnrm = 0.0
+
+            if std_val > 0:
+                z = (pixels - mean_val) / std_val
+                skewness = float(np.mean(z ** 3))
+                kurtosis = float(np.mean(z ** 4) - 3.0)
+            else:
+                skewness = kurtosis = 0.0
+
             records.append({
                 "frame": t,
                 "cell_id": int(cid),
-                "mean_intensity": float(pixels.mean()),
+                "mean_intensity": float(mean_val),
                 "total_intensity": float(pixels.sum()),
+                "min_intensity": float(pixels.min()),
                 "max_intensity": float(pixels.max()),
+                "std_intensity": float(std_val),
+                "cv": cv,
+                "skewness": skewness,
+                "kurtosis": kurtosis,
+                "nnrm": nnrm,
             })
 
     return pd.DataFrame(records)
+
+
+def detect_fluorescence_disappearance(
+    tracked: pd.DataFrame,
+    threshold: float = -0.5,
+) -> pd.DataFrame:
+    """Detect per-track fluorescence disappearance frame.
+
+    For each track, finds the frame where total fluorescence intensity
+    has the largest single-frame relative drop. If the drop exceeds
+    *threshold* (negative), that frame is flagged as the fluorescence
+    disappearance frame.
+
+    Parameters
+    ----------
+    tracked : pd.DataFrame
+        Must contain columns: track_id, frame, total_intensity.
+    threshold : float
+        Minimum relative change to count as disappearance (e.g., -0.5
+        means a 50% drop). Tuned empirically.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per track with columns: track_id, fluor_disappearance_frame,
+        max_drop (the relative change at that frame). Tracks with no drop
+        exceeding the threshold have NaN values.
+    """
+    results = []
+    for tid, grp in tracked.groupby("track_id"):
+        ts = grp.sort_values("frame")[["frame", "total_intensity"]].copy()
+        if len(ts) < 2:
+            results.append({"track_id": tid, "fluor_disappearance_frame": np.nan,
+                            "max_drop": np.nan})
+            continue
+
+        ts["prev"] = ts["total_intensity"].shift(1)
+        ts["rel_change"] = (ts["total_intensity"] - ts["prev"]) / ts["prev"]
+        ts = ts.dropna(subset=["rel_change"])
+
+        if ts.empty:
+            results.append({"track_id": tid, "fluor_disappearance_frame": np.nan,
+                            "max_drop": np.nan})
+            continue
+
+        worst = ts.loc[ts["rel_change"].idxmin()]
+        drop_val = float(worst["rel_change"])
+        results.append({
+            "track_id": tid,
+            "fluor_disappearance_frame": int(worst["frame"]) if drop_val <= threshold else np.nan,
+            "max_drop": drop_val,
+        })
+
+    return pd.DataFrame(results)
