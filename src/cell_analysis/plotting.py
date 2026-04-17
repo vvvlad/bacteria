@@ -724,6 +724,391 @@ def plot_growth_before_burst(tracked, track_stats):
         print(f"Median growth rate (survived): {survived_rates.median():.1f} px/frame")
 
 
+def plot_fluorescence_concentration(tracked):
+    """3-panel: concentration over time, outcome split, concentration vs volume."""
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+    ax = axes[0]
+    per_frame = tracked.groupby("frame")["fluor_concentration"].agg(["mean", "sem"])
+    ax.fill_between(
+        per_frame.index,
+        per_frame["mean"] - per_frame["sem"],
+        per_frame["mean"] + per_frame["sem"],
+        color="purple", alpha=0.3,
+    )
+    ax.plot(
+        per_frame.index, per_frame["mean"], "o-", color="purple",
+        linewidth=2, markersize=4, label="Mean +/- SEM",
+    )
+    ax.set(
+        xlabel="Frame", ylabel="F_total / Volume",
+        title="Fluorescence concentration over time",
+    )
+    ax.set_xticks(per_frame.index)
+    ax.legend(fontsize=9)
+
+    ax = axes[1]
+    survived_ids, disappeared_ids = _survival_split(tracked)
+    _outcome_split_panel(ax, tracked, "fluor_concentration", survived_ids, disappeared_ids)
+    ax.set(
+        xlabel="Frame", ylabel="F_total / Volume",
+        title="Concentration: disappeared vs. survived",
+    )
+
+    ax = axes[2]
+    sample = tracked.dropna(subset=["fluor_concentration", "volume"]).sample(
+        n=min(3000, len(tracked)), random_state=42,
+    )
+    ax.scatter(
+        sample["volume"], sample["fluor_concentration"],
+        alpha=0.15, s=10, color="purple", edgecolors="none",
+    )
+    ax.set(
+        xlabel="Volume (px^3)", ylabel="F_total / Volume",
+        title="Concentration vs. cell volume",
+    )
+    mask = np.isfinite(sample["volume"]) & np.isfinite(sample["fluor_concentration"])
+    if mask.sum() > 2:
+        r = np.corrcoef(
+            sample.loc[mask, "volume"], sample.loc[mask, "fluor_concentration"],
+        )[0, 1]
+        ax.annotate(
+            f"r = {r:.3f}", xy=(0.05, 0.95), xycoords="axes fraction",
+            fontsize=12, fontweight="bold", va="top",
+        )
+
+    plt.tight_layout()
+
+    print(f"Frame 0 mean concentration: {per_frame['mean'].iloc[0]:.3f}")
+    print(f"Frame {int(per_frame.index[-1])} mean concentration: "
+          f"{per_frame['mean'].iloc[-1]:.3f}")
+    change = per_frame['mean'].iloc[-1] / per_frame['mean'].iloc[0]
+    print(f"Change: {change:.2f}x")
+
+
+def plot_migration_speed(tracked, track_stats):
+    """3-panel: speed over time, outcome split, speed distribution."""
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+    ax = axes[0]
+    speed_data = tracked.dropna(subset=["speed"])
+    per_frame = speed_data.groupby("frame")["speed"].agg(["mean", "sem"])
+    ax.fill_between(
+        per_frame.index,
+        per_frame["mean"] - per_frame["sem"],
+        per_frame["mean"] + per_frame["sem"],
+        color="teal", alpha=0.3,
+    )
+    ax.plot(
+        per_frame.index, per_frame["mean"], "o-", color="teal",
+        linewidth=2, markersize=4, label="Mean +/- SEM",
+    )
+    ax.set(
+        xlabel="Frame", ylabel="Speed (px/frame)",
+        title="Population mean migration speed per frame",
+    )
+    ax.set_xticks(per_frame.index)
+    ax.legend(fontsize=9)
+
+    ax = axes[1]
+    survived_ids, disappeared_ids = _survival_split(tracked)
+    _outcome_split_panel(ax, speed_data, "speed", survived_ids, disappeared_ids)
+    ax.set(
+        xlabel="Frame", ylabel="Speed (px/frame)",
+        title="Migration speed: disappeared vs. survived",
+    )
+
+    ax = axes[2]
+    valid = track_stats.dropna(subset=["mean_speed"])
+    dis = valid[valid["disappeared"]]
+    surv = valid[~valid["disappeared"]]
+    if len(dis) > 0:
+        sns.histplot(dis["mean_speed"], ax=ax, color="tomato", label="Disappeared",
+                     alpha=0.6, edgecolor="white", bins=25, stat="density")
+    if len(surv) > 0:
+        sns.histplot(surv["mean_speed"], ax=ax, color="steelblue", label="Survived",
+                     alpha=0.6, edgecolor="white", bins=25, stat="density")
+    ax.set(
+        xlabel="Mean speed (px/frame)", ylabel="Density",
+        title="Speed distribution: disappeared vs. survived",
+    )
+    ax.legend(fontsize=9)
+
+    plt.tight_layout()
+
+    print(f"Median speed (disappeared): {dis['mean_speed'].median():.1f} px/frame")
+    if len(surv) > 0:
+        print(f"Median speed (survived): {surv['mean_speed'].median():.1f} px/frame")
+
+
+def plot_sav_ratio(tracked, track_stats):
+    """3-panel: SA:V over time, outcome split, SA:V at death vs survival."""
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+    ax = axes[0]
+    per_frame = tracked.groupby("frame")["sav_ratio"].agg(["mean", "sem"])
+    ax.fill_between(
+        per_frame.index,
+        per_frame["mean"] - per_frame["sem"],
+        per_frame["mean"] + per_frame["sem"],
+        color="darkgreen", alpha=0.3,
+    )
+    ax.plot(
+        per_frame.index, per_frame["mean"], "o-", color="darkgreen",
+        linewidth=2, markersize=4, label="Mean +/- SEM",
+    )
+    ax.set(
+        xlabel="Frame", ylabel="SA / V (px^-1)",
+        title="Surface-area-to-volume ratio over time",
+    )
+    ax.set_xticks(per_frame.index)
+    ax.legend(fontsize=9)
+
+    ax = axes[1]
+    survived_ids, disappeared_ids = _survival_split(tracked)
+    _outcome_split_panel(ax, tracked, "sav_ratio", survived_ids, disappeared_ids)
+    ax.set(
+        xlabel="Frame", ylabel="SA / V (px^-1)",
+        title="SA:V ratio: disappeared vs. survived",
+    )
+
+    ax = axes[2]
+    last_obs = tracked.sort_values("frame").groupby("track_id").last().reset_index()
+    last_obs = last_obs.merge(
+        track_stats[["track_id", "disappeared"]], on="track_id",
+    )
+    dis_final = last_obs.loc[last_obs["disappeared"], "sav_ratio"].dropna()
+    surv_final = last_obs.loc[~last_obs["disappeared"], "sav_ratio"].dropna()
+    if len(dis_final) > 0:
+        sns.histplot(dis_final, ax=ax, color="tomato", label="Disappeared (final frame)",
+                     alpha=0.6, edgecolor="white", bins=25, stat="density")
+    if len(surv_final) > 0:
+        sns.histplot(surv_final, ax=ax, color="steelblue", label="Survived (final frame)",
+                     alpha=0.6, edgecolor="white", bins=25, stat="density")
+    ax.set(
+        xlabel="SA:V at last observation", ylabel="Density",
+        title="SA:V at disappearance vs. final frame (survived)",
+    )
+    ax.legend(fontsize=9)
+
+    plt.tight_layout()
+
+    print(f"SA:V at frame 0: {per_frame['mean'].iloc[0]:.4f}")
+    print(f"SA:V at frame {int(per_frame.index[-1])}: "
+          f"{per_frame['mean'].iloc[-1]:.4f}")
+    if len(dis_final) > 0:
+        print(f"Median SA:V at death: {dis_final.median():.4f}")
+    if len(surv_final) > 0:
+        print(f"Median SA:V at end (survived): {surv_final.median():.4f}")
+
+
+def plot_death_clustering(tracked, track_stats, clustering_result):
+    """3-panel: spatial map of deaths, null distribution, temporal clustering."""
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+    ax = axes[0]
+    survived = track_stats[~track_stats["disappeared"]]
+    died = track_stats[track_stats["disappeared"]]
+    if "last_y" in survived.columns:
+        ax.scatter(
+            survived["last_x"], survived["last_y"],
+            alpha=0.3, s=15, color="steelblue", edgecolors="none", label="Survived",
+        )
+        ax.scatter(
+            died["last_x"], died["last_y"],
+            alpha=0.7, s=25, color="tomato", edgecolors="none", label="Disappeared",
+        )
+    ax.set(xlabel="X (px)", ylabel="Y (px)", title="Spatial distribution of cell fate")
+    ax.invert_yaxis()
+    ax.legend(fontsize=9)
+    ax.set_aspect("equal")
+
+    ax = axes[1]
+    null = clustering_result.get("null_distribution", np.array([]))
+    observed = clustering_result.get("mean_nn_distance_deaths", np.nan)
+    if len(null) > 0 and not np.isnan(observed):
+        sns.histplot(null, ax=ax, color="gray", edgecolor="white", bins=30, stat="density")
+        ax.axvline(observed, color="tomato", linewidth=2, linestyle="--",
+                   label=f"Observed ({observed:.0f} px)")
+        ax.set(
+            xlabel="Mean NN distance (px)", ylabel="Density",
+            title=f"Death clustering (p={clustering_result['p_value']:.3f})",
+        )
+        ax.legend(fontsize=9)
+    else:
+        ax.text(0.5, 0.5, "Insufficient data", ha="center", va="center",
+                transform=ax.transAxes, fontsize=12)
+
+    ax = axes[2]
+    if len(died) > 0 and "last_frame" in died.columns:
+        death_counts = died["last_frame"].value_counts().sort_index()
+        death_counts = death_counts.reindex(
+            range(int(tracked["frame"].max()) + 1), fill_value=0,
+        )
+        ax.bar(death_counts.index, death_counts.values,
+               color="tomato", edgecolor="white", alpha=0.7)
+        ax.set(
+            xlabel="Frame", ylabel="Deaths",
+            title="Temporal distribution of cell death",
+        )
+        ax.set_xticks(death_counts.index)
+
+    plt.tight_layout()
+
+
+def plot_preburst_fluorescence(tracked, track_stats, n_frames=5):
+    """3-panel: aligned pre-burst curves, slope distribution, spike vs no-spike."""
+    disappeared = track_stats[track_stats["disappeared"]].copy()
+    if disappeared.empty:
+        print("No disappeared tracks for pre-burst analysis.")
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+    ax = axes[0]
+    spike_tracks = disappeared[disappeared["preburst_spike"].fillna(False)]
+    no_spike_tracks = disappeared[~disappeared["preburst_spike"].fillna(False)]
+
+    for subset, color, label_prefix in [
+        (spike_tracks, "tomato", "Spike"),
+        (no_spike_tracks, "steelblue", "No spike"),
+    ]:
+        aligned_parts = []
+        for _, row in subset.iterrows():
+            tid = row["track_id"]
+            last_f = int(row["last_frame"])
+            grp = tracked[tracked["track_id"] == tid].sort_values("frame")
+            window = grp[(grp["frame"] >= last_f - n_frames) & (grp["frame"] <= last_f)]
+            if len(window) < 2:
+                continue
+            f0_intensity = grp["mean_intensity"].iloc[0]
+            if f0_intensity == 0:
+                continue
+            rel_frame = window["frame"] - last_f
+            rel_intensity = window["mean_intensity"] / f0_intensity
+            aligned_parts.append(pd.DataFrame({
+                "rel_frame": rel_frame, "rel_intensity": rel_intensity,
+            }))
+            if len(aligned_parts) <= 15:
+                ax.plot(rel_frame, rel_intensity, alpha=0.1, color=color, linewidth=0.8)
+
+        if aligned_parts:
+            all_aligned = pd.concat(aligned_parts, ignore_index=True)
+            stats = all_aligned.groupby("rel_frame")["rel_intensity"].agg(["mean", "sem"])
+            ax.plot(
+                stats.index, stats["mean"], "o-", color=color,
+                linewidth=2, markersize=4,
+                label=f"{label_prefix} (n={len(subset)})",
+            )
+
+    ax.axvline(0, color="black", linestyle=":", alpha=0.5, label="Burst frame")
+    ax.set(
+        xlabel="Frames relative to burst", ylabel="F(t) / F(0)",
+        title=f"Pre-burst fluorescence (last {n_frames} frames)",
+    )
+    ax.legend(fontsize=9)
+
+    ax = axes[1]
+    slopes = disappeared["preburst_slope"].dropna()
+    if len(slopes) > 0:
+        sns.histplot(slopes, ax=ax, color="darkorange", edgecolor="white", bins=25)
+        ax.axvline(0, color="black", linestyle="--", alpha=0.5)
+        ax.set(
+            xlabel="Pre-burst intensity slope", ylabel="Count",
+            title="Distribution of pre-burst fluorescence slopes",
+        )
+        n_pos = (slopes > 0).sum()
+        n_neg = (slopes <= 0).sum()
+        ax.annotate(
+            f"Positive: {n_pos}\nNegative: {n_neg}",
+            xy=(0.95, 0.95), xycoords="axes fraction",
+            fontsize=10, ha="right", va="top",
+        )
+
+    ax = axes[2]
+    n_spike = len(spike_tracks)
+    n_no = len(no_spike_tracks)
+    if n_spike + n_no > 0:
+        ax.bar(["Spike", "No spike"], [n_spike, n_no],
+               color=["tomato", "steelblue"], edgecolor="white")
+        ax.set(ylabel="Count", title="Pre-burst spike classification")
+        for i, v in enumerate([n_spike, n_no]):
+            ax.text(i, v + 0.5, str(v), ha="center", fontsize=11, fontweight="bold")
+
+    plt.tight_layout()
+
+    if len(slopes) > 0:
+        print(f"Median pre-burst slope: {slopes.median():.2f}")
+        print(f"Cells with pre-burst spike: {n_spike}/{n_spike + n_no}")
+
+
+def plot_growth_phases(tracked, track_stats):
+    """3-panel: changepoint distribution, slope ratio, example curves."""
+    valid = track_stats[track_stats["changepoint_frame"].notna()]
+    if valid.empty:
+        print("No tracks with detected growth phases.")
+        return
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+    ax = axes[0]
+    sns.histplot(valid["changepoint_frame"], ax=ax, color="teal",
+                 edgecolor="white", bins=range(int(tracked["frame"].max()) + 2))
+    ax.set(
+        xlabel="Frame", ylabel="Count",
+        title="Distribution of growth changepoints",
+    )
+
+    ax = axes[1]
+    has_both = valid.dropna(subset=["slope_before", "slope_after"])
+    colors = has_both["disappeared"].map({True: "tomato", False: "steelblue"})
+    ax.scatter(
+        has_both["slope_before"], has_both["slope_after"],
+        c=colors, alpha=0.5, s=25, edgecolors="none",
+    )
+    lims = [
+        min(has_both["slope_before"].min(), has_both["slope_after"].min()) - 5,
+        max(has_both["slope_before"].max(), has_both["slope_after"].max()) + 5,
+    ]
+    ax.plot(lims, lims, "k--", alpha=0.3, label="Equal slopes")
+    ax.scatter([], [], c="steelblue", s=25, label="Survived")
+    ax.scatter([], [], c="tomato", s=25, label="Disappeared")
+    ax.set(
+        xlabel="Slope before changepoint (px/frame)",
+        ylabel="Slope after changepoint (px/frame)",
+        title="Growth rate transition",
+    )
+    ax.legend(fontsize=9)
+
+    ax = axes[2]
+    rng = np.random.default_rng(42)
+    example_ids = rng.choice(
+        valid["track_id"].values, size=min(8, len(valid)), replace=False,
+    )
+    for tid in example_ids:
+        grp = tracked[tracked["track_id"] == tid].sort_values("frame")
+        cp = int(valid.loc[valid["track_id"] == tid, "changepoint_frame"].iloc[0])
+        a0 = grp["area"].iloc[0]
+        if a0 == 0:
+            continue
+        ax.plot(grp["frame"], grp["area"] / a0, alpha=0.6, linewidth=1.2)
+        ax.axvline(cp, alpha=0.15, color="gray", linewidth=0.5)
+
+    ax.set(
+        xlabel="Frame", ylabel="Area / Area(0)",
+        title=f"Example growth curves (n={len(example_ids)}, gray=changepoint)",
+    )
+
+    plt.tight_layout()
+
+    dis_cp = valid.loc[valid["disappeared"], "changepoint_frame"].dropna()
+    surv_cp = valid.loc[~valid["disappeared"], "changepoint_frame"].dropna()
+    if len(dis_cp) > 0:
+        print(f"Median changepoint (disappeared): frame {dis_cp.median():.0f}")
+    if len(surv_cp) > 0:
+        print(f"Median changepoint (survived): frame {surv_cp.median():.0f}")
+
+
 def plot_fluorescence_vs_volume(tracked):
     """Scatter total and mean fluorescence vs cell volume."""
     sample = tracked.dropna(subset=["total_intensity", "volume"]).sample(

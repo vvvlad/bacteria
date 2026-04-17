@@ -187,3 +187,130 @@ def add_fluorescence_disappearance(tracked, track_stats, threshold=-0.3):
 
     track_stats = track_stats.merge(fluor_disapp, on="track_id", how="left")
     return track_stats
+
+
+def add_fluorescence_concentration(tracked):
+    """Add fluor_concentration column (total_intensity / volume).
+
+    Returns *tracked* with the new column added in-place.
+    """
+    tracked["fluor_concentration"] = np.where(
+        tracked["volume"] > 0,
+        tracked["total_intensity"] / tracked["volume"],
+        np.nan,
+    )
+    valid = tracked["fluor_concentration"].notna().sum()
+    print(f"Fluorescence concentration: {valid}/{len(tracked)} cells computed")
+    return tracked
+
+
+def add_migration(tracked, track_stats):
+    """Compute per-frame speed and per-track migration statistics.
+
+    Adds 'speed' column to *tracked* in-place. Returns new *track_stats*
+    with migration columns merged in.
+    """
+    from .tracking import compute_migration_stats
+
+    migration = compute_migration_stats(tracked, per_frame=tracked)
+    track_stats = track_stats.merge(migration, on="track_id", how="left")
+
+    valid = track_stats["mean_speed"].notna()
+    print(f"Migration stats: {valid.sum()} tracks")
+    print(f"Median mean speed: {track_stats.loc[valid, 'mean_speed'].median():.1f} px/frame")
+    print(f"Median net displacement: "
+          f"{track_stats.loc[valid, 'net_displacement'].median():.1f} px")
+
+    return tracked, track_stats
+
+
+def add_sav_ratio(tracked):
+    """Add surface-area-to-volume ratio column.
+
+    Returns *tracked* with 'sav_ratio' column added in-place.
+    """
+    tracked["sav_ratio"] = np.where(
+        tracked["volume"] > 0,
+        tracked["surface_area"] / tracked["volume"],
+        np.nan,
+    )
+    valid = tracked["sav_ratio"].notna().sum()
+    print(f"SA:V ratio: {valid}/{len(tracked)} cells computed")
+    print(f"Median SA:V at frame 0: "
+          f"{tracked.loc[tracked['frame'] == 0, 'sav_ratio'].median():.4f}")
+    return tracked
+
+
+def add_death_clustering(tracked, track_stats, n_permutations=1000):
+    """Compute spatial clustering of cell death and print results.
+
+    Returns (clustering_result dict, track_stats with last_y/last_x).
+    """
+    from .matching import compute_death_clustering
+
+    last_obs = (
+        tracked.sort_values("frame")
+        .groupby("track_id")
+        .agg(last_y=("centroid_y", "last"), last_x=("centroid_x", "last"))
+    )
+    ts = track_stats.merge(last_obs, on="track_id", how="left")
+
+    result = compute_death_clustering(ts, n_permutations=n_permutations)
+
+    if not np.isnan(result["clustering_ratio"]):
+        print(f"Death clustering analysis ({n_permutations} permutations):")
+        print(f"  Mean NN distance (deaths): {result['mean_nn_distance_deaths']:.1f} px")
+        print(f"  Mean NN distance (random): {result['mean_nn_distance_random']:.1f} px")
+        print(f"  Clustering ratio: {result['clustering_ratio']:.3f} "
+              f"({'clustered' if result['clustering_ratio'] < 0.8 else 'not clustered'})")
+        print(f"  p-value: {result['p_value']:.4f}")
+    else:
+        print("Death clustering: too few deaths for analysis")
+
+    return result, ts
+
+
+def add_preburst_fluorescence(tracked, track_stats, n_frames=5):
+    """Analyze pre-burst fluorescence behavior for disappeared tracks.
+
+    Returns new *track_stats* with preburst_slope and preburst_spike columns.
+    """
+    from .matching import compute_preburst_fluorescence
+
+    preburst = compute_preburst_fluorescence(tracked, track_stats, n_frames=n_frames)
+    track_stats = track_stats.merge(preburst, on="track_id", how="left")
+
+    spikes = track_stats["preburst_spike"].fillna(False)
+    n_spikes = spikes.sum()
+    n_dis = track_stats["disappeared"].sum()
+    print(f"Pre-burst fluorescence ({n_frames}-frame window):")
+    if n_dis > 0:
+        print(f"  Tracks with pre-burst spike: {n_spikes}/{n_dis} "
+              f"({n_spikes / n_dis:.0%})")
+    else:
+        print("  No disappeared tracks")
+
+    return track_stats
+
+
+def add_growth_phases(tracked, track_stats, min_points=4):
+    """Detect growth phase transitions and merge into track_stats.
+
+    Returns new *track_stats* with changepoint_frame, slope_before,
+    slope_after, and slope_ratio columns.
+    """
+    from .tracking import detect_growth_phases
+
+    phases = detect_growth_phases(tracked, min_points=min_points)
+    track_stats = track_stats.merge(phases, on="track_id", how="left")
+
+    valid = track_stats["changepoint_frame"].notna()
+    print(f"Growth phases detected: {valid.sum()} tracks")
+    if valid.any():
+        print(f"Median changepoint frame: "
+              f"{track_stats.loc[valid, 'changepoint_frame'].median():.0f}")
+        ratios = track_stats.loc[valid, "slope_ratio"].dropna()
+        if len(ratios) > 0:
+            print(f"Median slope ratio (after/before): {ratios.median():.2f}")
+
+    return track_stats

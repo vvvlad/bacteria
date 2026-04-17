@@ -175,7 +175,52 @@ flowchart LR
     amax --> fmax["frame_of_max_area"]
 ```
 
-Modules in `src/cell_analysis/`: `io.py`, `segmentation.py`, `tracking.py`, `matching.py`.
+### Advanced statistics
+
+```mermaid
+flowchart TD
+    tracked["tracked DataFrame\n(with area, volume, surface_area, fluorescence)"]
+
+    subgraph CONC["Fluorescence Concentration"]
+        fc["total_intensity / volume\n(dilution-corrected signal)"]
+    end
+
+    subgraph MIG["Migration"]
+        spd["Per-frame centroid displacement\n→ speed column"]
+        mig["Per-track: mean/max speed,\ntotal/net displacement"]
+    end
+
+    subgraph SAV["SA:V Ratio"]
+        sav["surface_area / volume\n(membrane stress indicator)"]
+    end
+
+    subgraph CLUST["Death Clustering"]
+        last["Last observed position\nper disappeared track"]
+        nn["Nearest-neighbor distances\namong deaths"]
+        perm["Permutation test\n(1000 iterations)\nvs random subset"]
+    end
+
+    subgraph PRE["Pre-burst Fluorescence"]
+        win["n-frame window before\nlast detection"]
+        slope["Linear fit of\nmean_intensity in window"]
+        spike["Spike detection:\nslope > 0 AND\nmax > baseline"]
+    end
+
+    subgraph PHASE["Growth Phases"]
+        seg["2-segment piecewise\nlinear fit of area"]
+        cp["Optimal split point\n(min RSS)"]
+        ratio["slope_after / slope_before"]
+    end
+
+    tracked --> fc
+    tracked --> spd --> mig
+    tracked --> sav
+    tracked --> last --> nn --> perm
+    tracked --> win --> slope --> spike
+    tracked --> seg --> cp --> ratio
+```
+
+Modules in `src/cell_analysis/`: `io.py`, `segmentation.py`, `tracking.py`, `matching.py`, `pipeline.py`, `plotting.py`.
 
 Notebook entry point: `notebooks/analysis.ipynb`.
 
@@ -374,12 +419,18 @@ flowchart TD
         p10["Swelling vs initial size"]
         p11["Swelling vs DNA content"]
         p12["Growth before burst\n(aligned curves, rate & max size distributions)"]
+        p13["Fluorescence concentration\n(time series, outcome split, vs volume)"]
+        p14["Migration speed\n(time series, outcome split, distribution)"]
+        p15["SA:V ratio\n(time series, outcome split, histogram)"]
+        p16["Death clustering\n(spatial map, null distribution, temporal)"]
+        p17["Pre-burst fluorescence\n(aligned curves, slope distribution, classification)"]
+        p18["Growth phases\n(changepoint histogram, slope scatter, examples)"]
     end
 
     run --> tc
     run --> ts
     run --> df
-    run --> p1 & p2 & p3 & p4 & p5 & p6 & p7 & p8 & p9 & p10 & p11 & p12
+    run --> p1 & p2 & p3 & p4 & p5 & p6 & p7 & p8 & p9 & p10 & p11 & p12 & p13 & p14 & p15 & p16 & p17 & p18
 ```
 
 #### `tracked_cells.csv`
@@ -405,6 +456,9 @@ One row per cell per frame. Columns:
 | `skewness` | Pixel distribution skewness |
 | `kurtosis` | Pixel distribution excess kurtosis |
 | `nnrm` | Non-Normality Index (KS statistic) |
+| `speed` | Centroid displacement from previous frame (px) |
+| `fluor_concentration` | total_intensity / volume (dilution-corrected) |
+| `sav_ratio` | surface_area / volume (membrane stress indicator) |
 
 #### `track_statistics.csv`
 
@@ -431,6 +485,17 @@ One row per track. Columns:
 | `growth_rate_px_per_frame` | Linear growth rate (slope of area vs frame) |
 | `fluor_disappearance_frame` | Frame of largest fluorescence drop (if > threshold) |
 | `max_drop` | Largest single-frame relative drop in total intensity |
+| `mean_speed` | Time-averaged centroid speed (px/frame) |
+| `max_speed` | Maximum single-frame speed (px/frame) |
+| `speed_std` | Standard deviation of per-frame speed |
+| `total_displacement` | Sum of all step distances (px) |
+| `net_displacement` | Straight-line distance from first to last position (px) |
+| `preburst_slope` | Linear slope of mean_intensity in pre-burst window |
+| `preburst_spike` | True if fluorescence spikes before disappearance |
+| `changepoint_frame` | Frame of detected growth phase transition |
+| `slope_before` | Area growth rate before changepoint (px/frame) |
+| `slope_after` | Area growth rate after changepoint (px/frame) |
+| `slope_ratio` | slope_after / slope_before |
 
 #### `dropped_frames.csv`
 
@@ -630,3 +695,16 @@ Chronological record of completed work.
 - [x] Per-track growth metrics: initial area, peak area, relative max size, growth rate (linear fit)
 - [x] `compute_growth_stats()` in tracking module, `add_growth()` pipeline function
 - [x] Growth-before-burst visualization: area curves aligned to burst frame, growth rate and max size distributions (disappeared vs survived)
+
+### Phase 6: Advanced Statistics
+
+- [x] **Fluorescence concentration** (`fluor_concentration = total_intensity / volume`): dilution-corrected fluorescence signal, distinguishing true fluorescence loss from dilution by swelling
+- [x] **Cell migration speed**: per-frame centroid displacement, per-track mean/max/std speed, total and net displacement
+- [x] **SA:V ratio dynamics** (`surface_area / volume`): membrane stress indicator, tracks how surface-to-volume ratio changes as cells swell
+- [x] **Spatial clustering of cell death**: nearest-neighbor distance analysis among disappeared cells, permutation test (1000 iterations) comparing observed clustering to random subsets
+- [x] **Pre-burst fluorescence behavior**: linear fit of mean_intensity in n-frame window before disappearance, spike detection (positive slope + max exceeds baseline)
+- [x] **Growth phase detection**: 2-segment piecewise linear fit minimizing RSS, identifies changepoint frame and slope ratio (acceleration/deceleration)
+- [x] Pipeline wiring: `add_fluorescence_concentration()`, `add_migration()`, `add_sav_ratio()`, `add_death_clustering()`, `add_preburst_fluorescence()`, `add_growth_phases()`
+- [x] Visualization: 6 new 3-panel plot functions in `plotting.py`
+- [x] Exports updated in `__init__.py`
+- [x] 40 tests passing across all new features

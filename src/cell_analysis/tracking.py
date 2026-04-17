@@ -269,6 +269,147 @@ def compute_growth_stats(tracked: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
+def compute_migration_stats(tracked, per_frame=None):
+    """Compute per-track migration speed statistics.
+
+    Parameters
+    ----------
+    tracked : pd.DataFrame
+        Must contain columns: track_id, frame, centroid_y, centroid_x.
+    per_frame : pd.DataFrame or None
+        If provided, a 'speed' column is added to this DataFrame in-place
+        (NaN for the first frame of each track).
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per track: track_id, mean_speed, max_speed, speed_std,
+        total_displacement, net_displacement (px).
+    """
+    speeds_per_frame = []
+    records = []
+
+    for tid, grp in tracked.groupby("track_id"):
+        ts = grp.sort_values("frame")
+        y = ts["centroid_y"].values
+        x = ts["centroid_x"].values
+
+        if len(ts) < 2:
+            records.append({
+                "track_id": tid, "mean_speed": np.nan, "max_speed": np.nan,
+                "speed_std": np.nan, "total_displacement": np.nan,
+                "net_displacement": np.nan,
+            })
+            if per_frame is not None:
+                for idx in ts.index:
+                    speeds_per_frame.append((idx, np.nan))
+            continue
+
+        dy = np.diff(y)
+        dx = np.diff(x)
+        step_dists = np.sqrt(dy**2 + dx**2)
+
+        net = np.sqrt((y[-1] - y[0])**2 + (x[-1] - x[0])**2)
+
+        records.append({
+            "track_id": tid,
+            "mean_speed": float(step_dists.mean()),
+            "max_speed": float(step_dists.max()),
+            "speed_std": float(step_dists.std()),
+            "total_displacement": float(step_dists.sum()),
+            "net_displacement": float(net),
+        })
+
+        if per_frame is not None:
+            indices = ts.index.tolist()
+            speeds_per_frame.append((indices[0], np.nan))
+            for i, idx in enumerate(indices[1:]):
+                speeds_per_frame.append((idx, float(step_dists[i])))
+
+    if per_frame is not None:
+        speed_series = pd.Series(np.nan, index=per_frame.index, dtype=float)
+        for idx, val in speeds_per_frame:
+            speed_series[idx] = val
+        per_frame["speed"] = speed_series
+
+    return pd.DataFrame(records)
+
+
+def detect_growth_phases(tracked, min_points=4):
+    """Detect growth phase transition via optimal 2-segment piecewise linear fit.
+
+    For each track, tries every possible split point and picks the one
+    that minimizes total residual sum of squares.
+
+    Parameters
+    ----------
+    tracked : pd.DataFrame
+        Must contain: track_id, frame, area.
+    min_points : int
+        Minimum detections per track for phase detection.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per track: track_id, changepoint_frame, slope_before,
+        slope_after, slope_ratio (after/before).
+    """
+    records = []
+    for tid, grp in tracked.groupby("track_id"):
+        ts = grp.sort_values("frame")
+        frames = ts["frame"].values.astype(np.float64)
+        areas = ts["area"].values.astype(np.float64)
+        n = len(frames)
+
+        if n < min_points:
+            records.append({
+                "track_id": tid, "changepoint_frame": np.nan,
+                "slope_before": np.nan, "slope_after": np.nan,
+                "slope_ratio": np.nan,
+            })
+            continue
+
+        best_rss = np.inf
+        best_k = None
+        best_slopes = (0.0, 0.0)
+
+        for k in range(2, n - 1):
+            f1, a1 = frames[:k], areas[:k]
+            f2, a2 = frames[k:], areas[k:]
+
+            if len(f1) < 2 or len(f2) < 2:
+                continue
+
+            c1 = np.polyfit(f1, a1, 1)
+            c2 = np.polyfit(f2, a2, 1)
+            r1 = a1 - np.polyval(c1, f1)
+            r2 = a2 - np.polyval(c2, f2)
+            rss = float(np.sum(r1**2) + np.sum(r2**2))
+
+            if rss < best_rss:
+                best_rss = rss
+                best_k = k
+                best_slopes = (float(c1[0]), float(c2[0]))
+
+        if best_k is not None:
+            cp_frame = int(frames[best_k])
+            s_before, s_after = best_slopes
+            ratio = s_after / s_before if abs(s_before) > 1e-6 else np.nan
+        else:
+            cp_frame = np.nan
+            s_before = s_after = ratio = np.nan
+
+        records.append({
+            "track_id": tid,
+            "changepoint_frame": cp_frame,
+            "slope_before": s_before,
+            "slope_after": s_after,
+            "slope_ratio": ratio,
+        })
+
+    return pd.DataFrame(records)
+
+
 def detect_bad_frames(
     detections: pd.DataFrame,
     z_threshold: float = 3.5,
