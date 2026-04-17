@@ -558,6 +558,8 @@ Volume and surface area derived from area assuming spherical geometry: V = (4/3)
 
 5. **Fluorescence as leading indicator**: 9/25 disappeared cells showed fluorescence drop before phase disappearance, suggesting gradual membrane failure rather than instantaneous rupture.
 
+6. **DNA does not persist after cell lysis**: Independent Cellpose segmentation of the fluorescence channel (diameter=25, ~422 nuclei/frame) shows nucleus counts decline in parallel with phase-contrast cell counts. Phase lost 171 cells, fluorescence lost 169 nuclei — near-identical rates. The constant ~50 offset (fluorescence detects more objects) is stable across all 25 frames (std ~3.5). This means fluorescent DNA disperses immediately upon membrane rupture rather than remaining as a discrete object.
+
 ---
 
 ## Open Questions and Limitations
@@ -568,7 +570,7 @@ Volume and surface area derived from area assuming spherical geometry: V = (4/3)
 
 3. **Cellpose segmentation misses**: ~5-6 cells/frame have no mask. Parameter sweeps (diameter, cellprob_threshold, flow_threshold) did not recover them without breaking existing detections.
 
-4. **No independent nucleus segmentation**: fluorescence is measured through whole-cell masks, not nucleus-only masks. Infrastructure exists in `matching.py:match_cells_to_nuclei()` but is not yet used for shape analysis.
+4. **Nucleus shape analysis**: Independent fluorescence segmentation now exists (`detect_nuclei_stack()`) and confirms nuclei don't persist after lysis. Nucleus-to-cell area ratio and condensation/fragmentation analysis via `match_cells_to_nuclei()` remain future work.
 
 5. **Single dataset**: all tuning and validation performed on one 25-frame time-lapse. Generalization to other datasets, imaging conditions, or cell types is untested.
 
@@ -708,3 +710,19 @@ Chronological record of completed work.
 - [x] Visualization: 6 new 3-panel plot functions in `plotting.py`
 - [x] Exports updated in `__init__.py`
 - [x] 40 tests passing across all new features
+
+### Phase 7: Nucleus Persistence Analysis
+
+- [x] Independent fluorescence channel segmentation via `detect_nuclei_stack()` (Cellpose, diameter=25, no inversion needed)
+- [x] `run_nucleus_persistence()` pipeline function: frame-by-frame count comparison with automated conclusion
+- [x] `plot_nucleus_persistence()` visualization: count overlay + offset stability chart
+- [x] **Finding**: DNA does not persist as discrete object after lysis — phase and fluorescence counts decline in parallel (171 vs 169 lost)
+
+### Phase 7 post-review fixes
+
+- [x] Removed unused `fluor_stack` parameter from `run_nucleus_persistence()` — frame count is derived from `label_stack`
+- [x] Added shape validation assertion between `label_stack` and `nucleus_label_stack`
+- [x] Strengthened conclusion logic: now requires **both** an endpoint test (total loss agreement within tolerance) **and** a trajectory test (offset CV below threshold) to conclude "parallel". Previously only checked endpoints, which could miss divergent mid-trajectory behavior
+- [x] Added inline comment in `detect_nuclei_stack()` explaining why no image inversion is needed (fluorescence nuclei already bright on dark, unlike phase-contrast)
+- [x] Removed explicit `channels=[0, 0]` from `detect_nuclei_stack()` for consistency with `detect_cells_frame()` (Cellpose defaults to `[0, 0]` for grayscale)
+- [x] Moved `detect_nuclei_stack`, `run_nucleus_persistence`, `plot_nucleus_persistence` imports to top-level notebook import cell

@@ -173,6 +173,65 @@ def detect_cells_stack(
     return centroids_per_frame, label_stack
 
 
+def detect_nuclei_stack(
+    fluor_stack: np.ndarray,
+    diameter: float = 25,
+    min_area: int = 100,
+    gpu: bool = False,
+    resample: bool = False,
+) -> np.ndarray:
+    """Segment fluorescent nuclei across all frames using Cellpose.
+
+    Parameters
+    ----------
+    fluor_stack : np.ndarray
+        Fluorescence image stack (T, Y, X).
+    diameter : float
+        Expected nucleus diameter in pixels.
+    min_area : int
+        Reject regions smaller than this.
+    gpu : bool
+        Use GPU acceleration if available.
+    resample : bool
+        Resample masks to original resolution.
+
+    Returns
+    -------
+    nucleus_label_stack : np.ndarray
+        Label stack (T, Y, X) with integer nucleus IDs.
+    """
+    from cellpose.models import CellposeModel
+
+    model = CellposeModel(gpu=gpu)
+    T, H, W = fluor_stack.shape
+    label_stack = np.zeros((T, H, W), dtype=np.int32)
+
+    for t in range(T):
+        # No inversion: fluorescence nuclei are already bright on dark background,
+        # unlike phase-contrast cells which require inversion in detect_cells_frame.
+        masks, _, _ = model.eval(
+            fluor_stack[t], diameter=diameter, resample=resample,
+        )
+        if masks.shape != (H, W):
+            from skimage.transform import resize
+            masks = resize(
+                masks, (H, W), order=0, preserve_range=True,
+                anti_aliasing=False,
+            ).astype(masks.dtype)
+
+        if min_area > 0:
+            props = measure.regionprops(masks)
+            reject = [p.label for p in props if p.area < min_area]
+            if reject:
+                masks[np.isin(masks, reject)] = 0
+
+        label_stack[t] = masks
+        n = len(np.unique(masks)) - 1
+        print(f"  Frame {t:2d}: {n} nuclei")
+
+    return label_stack
+
+
 # ---------------------------------------------------------------------------
 # Classical detection (fallback -- no deep learning needed)
 # ---------------------------------------------------------------------------

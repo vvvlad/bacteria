@@ -52,6 +52,14 @@ tracking.compute_track_stats()   ──► per-track summary
     │      Measures mean/total/max intensity per cell per frame
     │      using phase-contrast masks on the fluorescence channel
     │
+    ├──► segmentation.detect_nuclei_stack(fluor_stack)
+    │      Independent Cellpose segmentation of fluorescence channel
+    │      No inversion (nuclei already bright on dark background)
+    │
+    ├──► pipeline.run_nucleus_persistence(label_stack, nucleus_label_stack)
+    │      Frame-by-frame count comparison: phase cells vs fluor nuclei
+    │      Dual test: endpoint loss agreement + offset CV stability
+    │
     ▼
 io.save_results() ──► CSV (with fluorescence columns)
 ```
@@ -64,6 +72,7 @@ io.save_results() ──► CSV (with fluorescence columns)
 - **resample=False optimization**: Cellpose returns masks at internal resolution; code resizes back with nearest-neighbor. 58x faster than resampling inside Cellpose.
 - **GPU routing**: `gpu=True` uses MPS on Apple Silicon, CUDA on NVIDIA. CPU works fine as fallback.
 - **Warning suppression**: Cellpose emits logging warnings (not `warnings.warn`), suppressed via `logging.getLogger("cellpose.dynamics").setLevel(logging.ERROR)`.
+- **Nucleus segmentation**: `detect_nuclei_stack` segments the fluorescence channel directly — no image inversion needed (unlike phase-contrast). Uses the same Cellpose model-reuse and resize-back patterns as `detect_cells_stack`.
 
 ## Key design details — tracking
 

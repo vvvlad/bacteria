@@ -11,11 +11,13 @@ from .pipeline import (
     add_sav_ratio as add_sav_ratio,
     load_experiment as load_experiment,
     run_frame_gating as run_frame_gating,
+    run_nucleus_persistence as run_nucleus_persistence,
     run_tracking as run_tracking,
 )
 from .segmentation import (
     detect_cells_frame as detect_cells_frame,
     detect_cells_stack as detect_cells_stack,
+    detect_nuclei_stack as detect_nuclei_stack,
 )
 from .io import save_results as save_results
 from .plotting import (
@@ -35,6 +37,7 @@ from .plotting import (
     plot_lifetime_distribution as plot_lifetime_distribution,
     plot_metric_dynamics as plot_metric_dynamics,
     plot_migration_speed as plot_migration_speed,
+    plot_nucleus_persistence as plot_nucleus_persistence,
     plot_preburst_fluorescence as plot_preburst_fluorescence,
     plot_relative_fluorescence as plot_relative_fluorescence,
     plot_sav_ratio as plot_sav_ratio,

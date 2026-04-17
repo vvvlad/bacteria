@@ -731,6 +731,44 @@ def plot_growth_before_burst(tracked, track_stats):
         print(f"Median growth rate (survived): {survived_rates.median():.1f} px/frame")
 
 
+def plot_nucleus_persistence(comparison_df):
+    """2-panel: phase vs fluor counts over time, and offset stability."""
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    ax = axes[0]
+    ax.plot(
+        comparison_df["frame"], comparison_df["phase_cells"],
+        "o-", color="steelblue", linewidth=2, markersize=4, label="Phase cells",
+    )
+    ax.plot(
+        comparison_df["frame"], comparison_df["fluor_nuclei"],
+        "s-", color="darkorange", linewidth=2, markersize=4, label="Fluor nuclei",
+    )
+    ax.set(
+        xlabel="Frame", ylabel="Count",
+        title="Phase cells vs. fluorescent nuclei per frame",
+    )
+    ax.set_xticks(comparison_df["frame"])
+    ax.legend(fontsize=10)
+
+    ax = axes[1]
+    ax.bar(
+        comparison_df["frame"], comparison_df["difference"],
+        color="gray", edgecolor="white", alpha=0.7,
+    )
+    mean_diff = comparison_df["difference"].mean()
+    ax.axhline(mean_diff, color="tomato", linestyle="--", linewidth=1.5,
+               label=f"Mean offset: {mean_diff:.0f}")
+    ax.set(
+        xlabel="Frame", ylabel="Fluor nuclei - Phase cells",
+        title="Offset between fluorescence and phase-contrast counts",
+    )
+    ax.set_xticks(comparison_df["frame"])
+    ax.legend(fontsize=10)
+
+    plt.tight_layout()
+
+
 def plot_fluorescence_concentration(tracked):
     """3-panel: concentration over time, outcome split, concentration vs volume."""
     fig, axes = plt.subplots(1, 3, figsize=(20, 5))

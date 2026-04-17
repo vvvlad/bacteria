@@ -314,3 +314,98 @@ def add_growth_phases(tracked, track_stats, min_points=4):
             print(f"Median slope ratio (after/before): {ratios.median():.2f}")
 
     return track_stats
+
+
+def run_nucleus_persistence(label_stack, nucleus_label_stack,
+                            loss_tolerance=0.1, offset_cv_threshold=0.3):
+    """Compare phase-cell and fluorescence-nucleus counts per frame.
+
+    Quantifies whether fluorescent nuclei persist after cells disappear
+    from phase-contrast (burst).  Two independent tests must both pass
+    for a "parallel" conclusion:
+
+    1. **Endpoint test** — total loss counts (first-to-last frame) for
+       phase and fluorescence must agree within *loss_tolerance* of the
+       larger value.
+    2. **Trajectory test** — the coefficient of variation of the
+       per-frame offset (fluor − phase) must be below
+       *offset_cv_threshold*, ensuring the offset is stable across all
+       frames, not just at the endpoints.
+
+    A constant offset with parallel decline indicates nuclei do NOT
+    persist; a growing or erratic offset would indicate nuclei outlive
+    their cells.
+
+    Returns (DataFrame with per-frame counts, summary dict).
+    """
+    import pandas as pd
+
+    assert label_stack.shape == nucleus_label_stack.shape, (
+        f"Shape mismatch: label_stack {label_stack.shape} vs "
+        f"nucleus_label_stack {nucleus_label_stack.shape}"
+    )
+
+    T = label_stack.shape[0]
+    records = []
+    for t in range(T):
+        phase_n = len(np.unique(label_stack[t])) - 1
+        fluor_n = len(np.unique(nucleus_label_stack[t])) - 1
+        records.append({
+            "frame": t,
+            "phase_cells": phase_n,
+            "fluor_nuclei": fluor_n,
+            "difference": fluor_n - phase_n,
+        })
+
+    df = pd.DataFrame(records)
+
+    phase_lost = df["phase_cells"].iloc[0] - df["phase_cells"].iloc[-1]
+    fluor_lost = df["fluor_nuclei"].iloc[0] - df["fluor_nuclei"].iloc[-1]
+    offset_std = df["difference"].std()
+    mean_offset = df["difference"].mean()
+    offset_cv = offset_std / abs(mean_offset) if mean_offset != 0 else float("inf")
+
+    print(f"Phase cells lost (first to last frame): {phase_lost}")
+    print(f"Fluor nuclei lost (first to last frame): {fluor_lost}")
+    print(f"Difference std across frames: {offset_std:.1f}")
+
+    endpoint_ok = (
+        abs(phase_lost - fluor_lost)
+        <= loss_tolerance * max(phase_lost, fluor_lost, 1)
+    )
+    trajectory_ok = offset_cv < offset_cv_threshold
+
+    if endpoint_ok and trajectory_ok:
+        conclusion = "parallel"
+        print(
+            "\nConclusion: Phase cells and fluorescent nuclei disappear "
+            "at the same rate. DNA signal does NOT persist as a discrete "
+            "object after cell lysis — the fluorescent material disperses "
+            "upon membrane rupture."
+        )
+    else:
+        conclusion = "divergent"
+        reasons = []
+        if not endpoint_ok:
+            reasons.append(
+                f"total loss diverged ({phase_lost} vs {fluor_lost})"
+            )
+        if not trajectory_ok:
+            reasons.append(
+                f"offset CV too high ({offset_cv:.2f} >= {offset_cv_threshold})"
+            )
+        print(
+            f"\nConclusion: Divergent decline — nuclei may persist after "
+            f"lysis ({'; '.join(reasons)})"
+        )
+
+    summary = {
+        "phase_lost": int(phase_lost),
+        "fluor_lost": int(fluor_lost),
+        "mean_offset": float(mean_offset),
+        "offset_std": float(offset_std),
+        "offset_cv": float(offset_cv),
+        "conclusion": conclusion,
+    }
+
+    return df, summary
