@@ -1,7 +1,3 @@
-# Data (often large TIFFs)
-data/raw/
-data/processed/
-
 # Python
 __pycache__/
 *.pyc

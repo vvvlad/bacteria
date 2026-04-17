@@ -462,6 +462,13 @@ def plot_swelling_vs_survival(tracked):
         f"{per_track.loc[~per_track['survived'], 'V_rel_max'].median():.3f}x"
     )
 
+    per_track["lifetime"] = per_track["last_frame"] - cohort.groupby("track_id")["frame"].min().values + 1
+    per_track["swelling_rate"] = (per_track["V_rel_max"] - 1) / per_track["lifetime"]
+    surv_rate = per_track.loc[per_track["survived"], "swelling_rate"]
+    dis_rate = per_track.loc[~per_track["survived"], "swelling_rate"]
+    print(f"Median swelling rate (survived):    {surv_rate.median():.4f}x per frame")
+    print(f"Median swelling rate (disappeared): {dis_rate.median():.4f}x per frame")
+
 
 def plot_channels_preview(phase_stack, fluor_stack, frame=0):
     """Show phase-contrast and fluorescence channels side by side."""
@@ -974,10 +981,11 @@ def plot_preburst_fluorescence(tracked, track_stats, n_frames=5):
         (no_spike_tracks, "steelblue", "No spike"),
     ]:
         aligned_parts = []
+        grouped = tracked.groupby("track_id")
         for _, row in subset.iterrows():
             tid = row["track_id"]
             last_f = int(row["last_frame"])
-            grp = tracked[tracked["track_id"] == tid].sort_values("frame")
+            grp = grouped.get_group(tid).sort_values("frame")
             window = grp[(grp["frame"] >= last_f - n_frames) & (grp["frame"] <= last_f)]
             if len(window) < 2:
                 continue
