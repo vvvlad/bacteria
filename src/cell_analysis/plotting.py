@@ -1011,8 +1011,9 @@ def plot_preburst_fluorescence(tracked, track_stats, n_frames=5):
     fig, axes = plt.subplots(1, 3, figsize=(20, 5))
 
     ax = axes[0]
-    spike_tracks = disappeared[disappeared["preburst_spike"].fillna(False)]
-    no_spike_tracks = disappeared[~disappeared["preburst_spike"].fillna(False)]
+    spike_mask = disappeared["preburst_spike"].fillna(False).astype(bool)
+    spike_tracks = disappeared[spike_mask]
+    no_spike_tracks = disappeared[~spike_mask]
 
     for subset, color, label_prefix in [
         (spike_tracks, "tomato", "Spike"),
@@ -1153,6 +1154,106 @@ def plot_growth_phases(tracked, track_stats):
         print(f"Median changepoint (disappeared): frame {dis_cp.median():.0f}")
     if len(surv_cp) > 0:
         print(f"Median changepoint (survived): frame {surv_cp.median():.0f}")
+
+
+def plot_fate_prediction(prediction_df, summary):
+    """3-panel: ROC curve, feature importance, probability distribution."""
+    from sklearn.metrics import roc_curve
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+    ax = axes[0]
+    fpr, tpr, _ = roc_curve(prediction_df["disappeared"], prediction_df["predicted_prob"])
+    ax.plot(fpr, tpr, color="darkorange", linewidth=2,
+            label=f"AUC = {summary['auc']:.3f}")
+    ax.plot([0, 1], [0, 1], "k--", alpha=0.3, label="Random")
+    ax.set(xlabel="False positive rate", ylabel="True positive rate",
+           title="ROC curve (leave-one-out CV)")
+    ax.legend(fontsize=10)
+
+    ax = axes[1]
+    features = summary["feature_names"]
+    coefs = [summary["feature_importance"][f] for f in features]
+    colors = ["tomato" if c > 0 else "steelblue" for c in coefs]
+    ax.barh(features, coefs, color=colors, edgecolor="white")
+    ax.axvline(0, color="black", linewidth=0.5)
+    ax.set(xlabel="Coefficient (z-scored)", title="Feature importance")
+    ax.invert_yaxis()
+
+    ax = axes[2]
+    died = prediction_df[prediction_df["disappeared"]]
+    survived = prediction_df[~prediction_df["disappeared"]]
+    bins = np.linspace(0, 1, 25)
+    ax.hist(survived["predicted_prob"], bins=bins, alpha=0.6,
+            color="steelblue", label="Survived", edgecolor="white")
+    ax.hist(died["predicted_prob"], bins=bins, alpha=0.6,
+            color="tomato", label="Died", edgecolor="white")
+    ax.axvline(0.5, color="black", linestyle="--", alpha=0.5, label="Threshold")
+    ax.set(xlabel="Predicted death probability", ylabel="Count",
+           title="Prediction distribution by actual outcome")
+    ax.legend(fontsize=9)
+
+    plt.tight_layout()
+
+
+def plot_spatial_gradient(gradient_df, summary):
+    """4-panel: spatial scatter by fate, death rate by quartile, density by axis, position distributions."""
+    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
+
+    gradient_axis = summary["gradient_axis"]
+    axis_label = gradient_axis.replace("centroid_", "").upper()
+    other_axis = "centroid_y" if gradient_axis == "centroid_x" else "centroid_x"
+
+    died = gradient_df[gradient_df["disappeared"]]
+    survived = gradient_df[~gradient_df["disappeared"]]
+
+    ax = axes[0]
+    ax.scatter(survived["centroid_x"], survived["centroid_y"],
+               alpha=0.4, s=15, color="steelblue", label="Survived", edgecolors="none")
+    ax.scatter(died["centroid_x"], died["centroid_y"],
+               alpha=0.4, s=15, color="tomato", label="Died", edgecolors="none")
+    ax.set(xlabel="X position (px)", ylabel="Y position (px)",
+           title="Cell fate by spatial position (frame 0)")
+    ax.legend(fontsize=9)
+    ax.invert_yaxis()
+
+    ax = axes[1]
+    quartiles = sorted(summary["quartile_death_rates"].keys())
+    rates = [summary["quartile_death_rates"][q]["death_rate"] for q in quartiles]
+    n_cells = [summary["quartile_death_rates"][q]["n_cells"] for q in quartiles]
+    colors = plt.cm.RdYlBu_r(np.linspace(0.2, 0.8, 4))
+    bars = ax.bar([f"Q{q}" for q in quartiles], rates, color=colors, edgecolor="white")
+    for bar, n in zip(bars, n_cells):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                f"n={n}", ha="center", fontsize=9)
+    ax.set(xlabel=f"Quartile along {axis_label} axis", ylabel="Death rate",
+           title=f"Death rate by position quartile ({axis_label})")
+    ax.set_ylim(0, max(rates) * 1.2 if max(rates) > 0 else 1)
+
+    ax = axes[2]
+    bins = 30
+    ax.hist(survived[gradient_axis], bins=bins, alpha=0.5,
+            color="steelblue", label="Survived", edgecolor="white", density=True)
+    ax.hist(died[gradient_axis], bins=bins, alpha=0.5,
+            color="tomato", label="Died", edgecolor="white", density=True)
+    ax.set(xlabel=f"{axis_label} position (px)", ylabel="Density",
+           title=f"Position distribution along gradient axis ({axis_label})")
+    ax.legend(fontsize=9)
+
+    ax = axes[3]
+    for axis_name, label_name in [(gradient_axis, axis_label), (other_axis, other_axis.replace("centroid_", "").upper())]:
+        ax_stats = summary["axes_results"][axis_name]
+        p = ax_stats["mann_whitney_p"]
+        r = ax_stats["point_biserial_r"]
+        sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
+        ax.barh(label_name, abs(r), color="tomato" if p < 0.05 else "gray",
+                edgecolor="white")
+        ax.text(abs(r) + 0.005, label_name, f"r={r:+.3f} {sig}", va="center", fontsize=10)
+    ax.set(xlabel="|Point-biserial r|", title="Position-fate correlation by axis")
+    ax.set_xlim(0, max(abs(summary["axes_results"]["centroid_x"]["point_biserial_r"]),
+                       abs(summary["axes_results"]["centroid_y"]["point_biserial_r"])) * 1.4)
+
+    plt.tight_layout()
 
 
 def plot_fluorescence_vs_volume(tracked):

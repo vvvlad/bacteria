@@ -403,7 +403,19 @@ flowchart TD
     subgraph CSV["CSV files"]
         tc["tracked_cells.csv\nPer-cell per-frame data"]
         ts["track_statistics.csv\nPer-track summary"]
+        diag["frame_diagnostics.csv\nPer-frame detection statistics"]
         df["dropped_frames.csv\nFlagged frame audit log"]
+        ml["merge_log.csv\nTrack merging audit"]
+        fp["fate_predictions.csv\nPer-cell death predictions"]
+        sg["spatial_gradient.csv\nPer-cell gradient quartiles"]
+        np2["nucleus_persistence.csv\nPer-frame phase vs nucleus counts"]
+    end
+
+    subgraph SUMM["Summary CSVs (single-row, flattened)"]
+        cs["clustering_summary.csv\nSpatial clustering test"]
+        fps["fate_prediction_summary.csv\nAUC, feature importance"]
+        sgs["spatial_gradient_summary.csv\nPer-axis stats, quartile rates"]
+        nps["nucleus_persistence_summary.csv\nLoss counts, conclusion"]
     end
 
     subgraph PLOTS["Inline notebook plots"]
@@ -425,12 +437,13 @@ flowchart TD
         p16["Death clustering\n(spatial map, null distribution, temporal)"]
         p17["Pre-burst fluorescence\n(aligned curves, slope distribution, classification)"]
         p18["Growth phases\n(changepoint histogram, slope scatter, examples)"]
+        p19["Fate prediction\n(ROC curve, feature importance, probability distribution)"]
+        p20["Spatial gradient\n(scatter, quartile rates, density, correlation)"]
     end
 
-    run --> tc
-    run --> ts
-    run --> df
-    run --> p1 & p2 & p3 & p4 & p5 & p6 & p7 & p8 & p9 & p10 & p11 & p12 & p13 & p14 & p15 & p16 & p17 & p18
+    run --> tc & ts & diag & df & ml & fp & sg & np2
+    run --> cs & fps & sgs & nps
+    run --> p1 & p2 & p3 & p4 & p5 & p6 & p7 & p8 & p9 & p10 & p11 & p12 & p13 & p14 & p15 & p16 & p17 & p18 & p19 & p20
 ```
 
 #### `tracked_cells.csv`
@@ -560,6 +573,16 @@ Volume and surface area derived from area assuming spherical geometry: V = (4/3)
 
 6. **DNA does not persist after cell lysis**: Independent Cellpose segmentation of the fluorescence channel (diameter=25, ~422 nuclei/frame) shows nucleus counts decline in parallel with phase-contrast cell counts. Phase lost 171 cells, fluorescence lost 169 nuclei — near-identical rates. The constant ~50 offset (fluorescence detects more objects) is stable across all 25 frames (std ~3.5). This means fluorescent DNA disperses immediately upon membrane rupture rather than remaining as a discrete object.
 
+7. **Death timing is accelerating, not constant-rate**: Deaths ramp from 1-7/frame (frames 0-10) to 12-20/frame (frames 14-20), then drop to 6-8/frame (frames 21-23). The late drop reflects population depletion, not reduced stress. Suggests cumulative/threshold-based damage rather than constant-rate killing.
+
+8. **Nucleoid dispersal precedes lysis in 90% of dying cells**: CV drops from 0.632 (first frame) to 0.456 (last frame) in disappeared cells. Only 10% show CV increase before death — possibly a different death mechanism (rapid rupture without dispersal phase).
+
+9. **Cell fate is partially predictable from frame-0 features**: Mann-Whitney tests on the frame-0 cohort show cells that will die are already different at the start — smaller area (p=0.0008), higher CV (p<0.0001), higher nNRM (p<0.0001). Initial nucleoid heterogeneity is the strongest early predictor of cell fate.
+
+10. **Cells that die later are larger at death** (r=0.30, early death median area 859 px vs late death 1196 px). Supports a "swell until critical membrane threshold" model where cells accumulate osmotic stress until the membrane can no longer compensate.
+
+11. **Fluorescence drops 3.5 frames before phase disappearance on average** (in the 35 tracks with detectable drops, mean delta = -3.5 frames). This early warning window is substantial and could potentially be used for real-time death prediction.
+
 ---
 
 ## Open Questions and Limitations
@@ -574,6 +597,12 @@ Volume and surface area derived from area assuming spherical geometry: V = (4/3)
 
 5. **Single dataset**: all tuning and validation performed on one 25-frame time-lapse. Generalization to other datasets, imaging conditions, or cell types is untested.
 
+6. **Speed calculation assumed 1-frame gaps (fixed)**: `compute_migration_stats` originally divided displacement by 1, regardless of actual frame gaps. ~0.5% of consecutive detections had gaps > 1 frame (from dropped frames or detection gaps bridged by trackpy memory). Fixed by dividing displacement by actual frame difference. `total_displacement` (sum of raw distances) is unaffected; `mean_speed`, `max_speed`, `speed_std`, and per-frame `speed` column are now correct px/frame values.
+
+7. **Nucleus persistence comparison fragile to bad frames (fixed)**: `run_nucleus_persistence` compared phase label counts (zeroed for bad frames by gating) against nucleus label counts (not zeroed). This would show a spurious offset spike on any bad frame. Fixed by skipping frames where phase labels are zeroed but nucleus labels are not.
+
+8. **Ultra-short track artifacts**: 16 tracks with ≤3 detections are all classified as "disappeared." These may be transient segmentation artifacts (debris detected across a few frames) rather than real cells that died. A minimum-lifetime filter could reduce noise in disappearance statistics. Not yet implemented — requires choosing a threshold that doesn't discard genuine brief tracks.
+
 ---
 
 ## Future Work
@@ -583,6 +612,14 @@ Volume and surface area derived from area assuming spherical geometry: V = (4/3)
 - [ ] **Photobleaching calibration**: acquire or identify an unstressed control time-lapse for correction.
 - [ ] **Dilution correction**: F_total(t)/F_total(0) vs. F_mean(t)/F_mean(0) comparison.
 - [ ] **Multi-dataset validation**: test pipeline on additional datasets to check generalization of parameters.
+- [x] **Minimum-lifetime filter**: `filter_short_tracks()` with configurable `MIN_TRACK_DETECTIONS` (default 4). Removes ultra-short tracks that are likely segmentation artifacts.
+- [x] **Frame-0 fate prediction model**: logistic regression on area, CV, nNRM with LOO cross-validation. ROC curve, feature importance, and probability distribution plots.
+- [ ] **Fluorescence early-warning system**: fluorescence drops ~3.5 frames before phase disappearance on average. Could be developed into a real-time predictor of impending cell death.
+- [x] **Spatial gradient analysis**: `analyze_spatial_gradient()` with per-axis Mann-Whitney, point-biserial correlation, logistic regression AUC, and quartile death rate stratification.
+- [ ] **Survival analysis (Kaplan-Meier / Cox PH)**: time-to-event framework instead of binary died/survived. Kaplan-Meier curves stratified by initial features (area quartiles, CV quartiles, gradient position). Cox proportional hazards model for multivariate survival time prediction.
+- [ ] **Dynamic trajectory features for early warning**: rate of change in first 3-5 frames (area growth rate, CV slope, fluorescence decline rate) as predictors. Could enable "this cell will die within N frames" classifier.
+- [ ] **Critical membrane threshold testing**: test whether area_rel_max at death clusters around a value (mechanical rupture threshold). Plot SA:V ratio at death — if membrane stress is the driver, should converge to a critical value regardless of initial size.
+- [ ] **Neighborhood effects beyond gradient**: after accounting for gradient position, test whether cells near other dying cells die sooner. Local density at frame 0 vs fate could reveal crowding effects independent of drug gradient.
 
 ---
 
@@ -726,3 +763,37 @@ Chronological record of completed work.
 - [x] Added inline comment in `detect_nuclei_stack()` explaining why no image inversion is needed (fluorescence nuclei already bright on dark, unlike phase-contrast)
 - [x] Removed explicit `channels=[0, 0]` from `detect_nuclei_stack()` for consistency with `detect_cells_frame()` (Cellpose defaults to `[0, 0]` for grayscale)
 - [x] Moved `detect_nuclei_stack`, `run_nucleus_persistence`, `plot_nucleus_persistence` imports to top-level notebook import cell
+
+### Phase 8: Data Quality Fixes
+
+- [x] **Speed calculation bug fix**: `compute_migration_stats()` now divides displacement by actual frame gap instead of assuming 1-frame intervals. Affects ~0.5% of steps where trackpy memory bridged multi-frame gaps. New test `test_frame_gap_normalizes_speed` validates the fix.
+- [x] **Nucleus persistence bad-frame fix**: `run_nucleus_persistence()` now skips frames where phase `label_stack` was zeroed by frame gating but `nucleus_label_stack` was not, preventing spurious offset spikes.
+- [x] Documented 3 methodological issues in Open Questions (speed bug, bad-frame fragility, ultra-short tracks)
+- [x] Added 3 new Future Work items (minimum-lifetime filter, frame-0 fate prediction, fluorescence early-warning)
+- [x] 41 tests passing
+
+### Phase 9: Minimum-Lifetime Filter and Notebook Integration
+
+- [x] **Minimum-lifetime filter**: `filter_short_tracks()` pipeline function removes tracks with <N detections. Default `MIN_TRACK_DETECTIONS=4` in notebook config. Explained in notebook markdown.
+- [x] **Notebook wiring for all advanced statistics**: growth analysis (`add_growth`, `plot_growth_before_burst`), growth phases, fluorescence concentration, migration speed, SA:V ratio, death clustering, pre-burst fluorescence — all now called from the notebook with explanatory markdown cells
+- [x] Updated notebook imports, config cell, and export section description
+- [x] Updated Future Work: minimum-lifetime filter marked as done
+
+### Phase 10: Cell Fate Prediction
+
+- [x] `predict_fate_from_frame0()` in `matching.py`: logistic regression with LOO cross-validation on frame-0 features (area, CV, nNRM). Returns per-cell predictions and summary (AUC, accuracy, feature importance).
+- [x] `add_fate_prediction()` pipeline wrapper in `pipeline.py`
+- [x] `plot_fate_prediction()` 3-panel visualization: ROC curve, feature importance bar chart, probability distribution by outcome
+- [x] Notebook cells with explanatory markdown
+- [x] 4 unit tests passing (output structure, AUC > random, custom features, count consistency)
+- [x] 45 tests total passing
+
+### Phase 11: Spatial Gradient Analysis
+
+- [x] `analyze_spatial_gradient()` in `matching.py`: Mann-Whitney U test, point-biserial correlation, and logistic regression AUC for each axis (centroid_x, centroid_y). Auto-detects dominant gradient axis, bins into spatial quartiles with per-quartile death rates.
+- [x] `add_spatial_gradient()` pipeline wrapper in `pipeline.py`
+- [x] `plot_spatial_gradient()` 4-panel visualization: spatial scatter by fate, death rate by quartile, position distribution along gradient axis, per-axis correlation bar chart
+- [x] Notebook cells with explanatory markdown (between fate prediction and nucleus persistence)
+- [x] 5 unit tests passing (output structure, detects X gradient, quartile rates increase, AUC > random, counts sum)
+- [x] 50 tests total passing
+- [x] Documented 5 future research directions: spatial gradient analysis, survival analysis (Kaplan-Meier/Cox PH), dynamic trajectory features, critical membrane threshold testing, neighborhood effects beyond gradient

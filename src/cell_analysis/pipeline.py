@@ -89,6 +89,27 @@ def run_tracking(detections, search_range=30.0, memory=3,
     return tracked, track_stats, merge_log
 
 
+def filter_short_tracks(tracked, track_stats, min_detections=4):
+    """Remove tracks with fewer than *min_detections* observations.
+
+    Returns new (tracked, track_stats) DataFrames with short tracks removed.
+    """
+    is_short = track_stats["num_detections"] < min_detections
+    n_short = is_short.sum()
+    n_short_disappeared = track_stats.loc[is_short, "disappeared"].sum()
+    short_ids = track_stats.loc[is_short, "track_id"]
+
+    tracked = tracked[~tracked["track_id"].isin(short_ids)].copy()
+    track_stats = track_stats[~is_short].copy()
+
+    print(f"Removed {n_short} tracks with <{min_detections} detections "
+          f"({n_short_disappeared} were classified as disappeared)")
+    print(f"Remaining: {len(track_stats)} tracks, "
+          f"{track_stats['disappeared'].sum()} disappeared")
+
+    return tracked, track_stats
+
+
 def add_geometry(tracked, track_stats):
     """Add radius, volume, and surface_area columns (spherical assumption).
 
@@ -293,6 +314,54 @@ def add_preburst_fluorescence(tracked, track_stats, n_frames=5):
     return track_stats
 
 
+def add_fate_prediction(tracked, track_stats, features=None):
+    """Predict cell fate from frame-0 features using logistic regression.
+
+    Returns (prediction_df, prediction_summary).
+    """
+    from .matching import predict_fate_from_frame0
+
+    result_df, summary = predict_fate_from_frame0(
+        tracked, track_stats, features=features,
+    )
+
+    print(f"Fate prediction (LOO cross-validation, n={summary['n_cells']}):")
+    print(f"  AUC: {summary['auc']:.3f}")
+    print(f"  Accuracy: {summary['accuracy']:.1%}")
+    print(f"  Died: {summary['n_died']}, Survived: {summary['n_survived']}")
+    print(f"  Feature importance (z-scored coefficients):")
+    for feat, coef in summary["feature_importance"].items():
+        direction = "↑ death" if coef > 0 else "↓ death"
+        print(f"    {feat}: {coef:+.3f} ({direction})")
+
+    return result_df, summary
+
+
+def add_spatial_gradient(tracked, track_stats):
+    """Analyze spatial gradient in cell fate across the field of view.
+
+    Returns (gradient_df, gradient_summary).
+    """
+    from .matching import analyze_spatial_gradient
+
+    gradient_df, summary = analyze_spatial_gradient(tracked, track_stats)
+
+    axis_label = summary["gradient_axis"].replace("centroid_", "")
+    ax_stats = summary["axes_results"][summary["gradient_axis"]]
+
+    print(f"Spatial gradient analysis (dominant axis: {axis_label}):")
+    print(f"  Mann-Whitney p = {ax_stats['mann_whitney_p']:.2e}")
+    print(f"  Point-biserial r = {ax_stats['point_biserial_r']:+.3f} "
+          f"(p = {ax_stats['point_biserial_p']:.2e})")
+    print(f"  AUC (position only): {summary['auc_position_only']:.3f}")
+    print(f"  Death rate by quartile along {axis_label}:")
+    for q, rates in summary["quartile_death_rates"].items():
+        print(f"    Q{q}: {rates['death_rate']:.1%} "
+              f"({rates['n_died']}/{rates['n_cells']})")
+
+    return gradient_df, summary
+
+
 def add_growth_phases(tracked, track_stats, min_points=4):
     """Detect growth phase transitions and merge into track_stats.
 
@@ -348,6 +417,8 @@ def run_nucleus_persistence(label_stack, nucleus_label_stack,
     T = label_stack.shape[0]
     records = []
     for t in range(T):
+        if label_stack[t].max() == 0:
+            continue
         phase_n = len(np.unique(label_stack[t])) - 1
         fluor_n = len(np.unique(nucleus_label_stack[t])) - 1
         records.append({

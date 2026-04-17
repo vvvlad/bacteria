@@ -69,3 +69,17 @@ def test_per_frame_speed_column():
     assert "speed" in result_tracked.columns
     t1_f0 = result_tracked[(result_tracked["track_id"] == 1) & (result_tracked["frame"] == 0)]
     assert np.isnan(t1_f0["speed"].iloc[0])
+
+
+def test_frame_gap_normalizes_speed():
+    tracked = pd.DataFrame({
+        "frame": [0, 3],
+        "track_id": [1, 1],
+        "label": [1, 1],
+        "centroid_y": [0.0, 30.0],
+        "centroid_x": [0.0, 0.0],
+        "area": [800, 800],
+    })
+    result = compute_migration_stats(tracked)
+    assert result.iloc[0]["mean_speed"] == pytest.approx(10.0)
+    assert result.iloc[0]["total_displacement"] == pytest.approx(30.0)

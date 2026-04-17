@@ -324,3 +324,177 @@ def compute_preburst_fluorescence(tracked, track_stats, n_frames=5):
         })
 
     return pd.DataFrame(records)
+
+
+def _get_frame0_with_fate(tracked, track_stats, columns=None):
+    frame0_ids = track_stats[track_stats["first_frame"] == 0]["track_id"]
+    cols = ["track_id"] + (columns or [])
+    frame0 = tracked[
+        (tracked["track_id"].isin(frame0_ids)) & (tracked["frame"] == 0)
+    ][cols].copy()
+    return frame0.merge(
+        track_stats[["track_id", "disappeared"]], on="track_id",
+    )
+
+
+def predict_fate_from_frame0(tracked, track_stats, features=None):
+    """Logistic regression predicting cell death from frame-0 features.
+
+    Uses leave-one-out cross-validation (appropriate for ~300-400 cells).
+    Features are z-scored before fitting.
+
+    Parameters
+    ----------
+    tracked : pd.DataFrame
+        Must contain: track_id, frame, and columns listed in *features*.
+    track_stats : pd.DataFrame
+        Must contain: track_id, first_frame, disappeared.
+    features : list of str or None
+        Column names to use as predictors. Default: area, cv, nnrm.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per frame-0 cell: track_id, disappeared (actual),
+        predicted_prob, predicted_class, plus each feature value.
+    dict
+        Summary: auc, accuracy, n_cells, feature_importance (coefficients),
+        feature_names.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+    from sklearn.model_selection import LeaveOneOut
+    from sklearn.preprocessing import StandardScaler
+
+    if features is None:
+        features = ["area", "cv", "nnrm"]
+
+    frame0_data = _get_frame0_with_fate(tracked, track_stats, columns=features)
+    frame0_data = frame0_data.dropna(subset=features)
+
+    X = frame0_data[features].values
+    y = frame0_data["disappeared"].astype(int).values
+
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    loo = LeaveOneOut()
+    probs = np.zeros(len(y))
+    for train_idx, test_idx in loo.split(X_scaled):
+        model = LogisticRegression(max_iter=1000)
+        model.fit(X_scaled[train_idx], y[train_idx])
+        probs[test_idx] = model.predict_proba(X_scaled[test_idx])[:, 1]
+
+    full_model = LogisticRegression(max_iter=1000)
+    full_model.fit(X_scaled, y)
+
+    result_df = frame0_data[["track_id"] + features].copy()
+    result_df["disappeared"] = y.astype(bool)
+    result_df["predicted_prob"] = probs
+    result_df["predicted_class"] = (probs >= 0.5).astype(bool)
+
+    auc = roc_auc_score(y, probs)
+    accuracy = (result_df["predicted_class"] == result_df["disappeared"]).mean()
+
+    coefs = dict(zip(features, full_model.coef_[0]))
+
+    summary = {
+        "auc": float(auc),
+        "accuracy": float(accuracy),
+        "n_cells": len(y),
+        "n_died": int(y.sum()),
+        "n_survived": int((1 - y).sum()),
+        "feature_importance": coefs,
+        "feature_names": features,
+    }
+
+    return result_df, summary
+
+
+def analyze_spatial_gradient(tracked, track_stats):
+    """Test whether cell fate correlates with spatial position.
+
+    For each axis (centroid_x, centroid_y), computes:
+    - Mann-Whitney U test (died vs survived position)
+    - Point-biserial correlation (position vs disappeared)
+    - Logistic regression AUC (position alone predicting fate)
+
+    Identifies the dominant gradient axis and bins cells into spatial
+    quartiles along that axis for stratified analysis.
+
+    Parameters
+    ----------
+    tracked : pd.DataFrame
+        Must contain: track_id, frame, centroid_x, centroid_y.
+    track_stats : pd.DataFrame
+        Must contain: track_id, first_frame, disappeared.
+
+    Returns
+    -------
+    pd.DataFrame
+        Frame-0 cells with columns: track_id, centroid_x, centroid_y,
+        disappeared, gradient_quartile (1-4 along dominant axis).
+    dict
+        Summary: gradient_axis, axes_results (per-axis stats),
+        quartile_death_rates, auc_position_only.
+    """
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.metrics import roc_auc_score
+
+    frame0 = _get_frame0_with_fate(
+        tracked, track_stats, columns=["centroid_x", "centroid_y"],
+    )
+
+    y = frame0["disappeared"].astype(int).values
+    axes_results = {}
+
+    for axis in ["centroid_x", "centroid_y"]:
+        pos = frame0[axis].values
+        died_pos = pos[y == 1]
+        surv_pos = pos[y == 0]
+
+        u_stat, u_p = stats.mannwhitneyu(died_pos, surv_pos, alternative="two-sided")
+        r_pb, r_p = stats.pointbiserialr(y, pos)
+
+        axes_results[axis] = {
+            "mann_whitney_U": float(u_stat),
+            "mann_whitney_p": float(u_p),
+            "point_biserial_r": float(r_pb),
+            "point_biserial_p": float(r_p),
+            "died_median": float(np.median(died_pos)),
+            "survived_median": float(np.median(surv_pos)),
+        }
+
+    x_p = axes_results["centroid_x"]["mann_whitney_p"]
+    y_p = axes_results["centroid_y"]["mann_whitney_p"]
+    gradient_axis = "centroid_x" if x_p < y_p else "centroid_y"
+
+    pos_col = frame0[gradient_axis].values.reshape(-1, 1)
+    model = LogisticRegression(max_iter=1000)
+    model.fit(pos_col, y)
+    probs = model.predict_proba(pos_col)[:, 1]
+    auc = roc_auc_score(y, probs)
+
+    frame0["gradient_quartile"] = pd.qcut(
+        frame0[gradient_axis], q=4, labels=[1, 2, 3, 4],
+    ).astype(int)
+
+    quartile_rates = {}
+    for q in range(1, 5):
+        mask = frame0["gradient_quartile"] == q
+        n_q = mask.sum()
+        n_died = frame0.loc[mask, "disappeared"].sum()
+        quartile_rates[q] = {
+            "n_cells": int(n_q),
+            "n_died": int(n_died),
+            "death_rate": float(n_died / n_q) if n_q > 0 else 0.0,
+        }
+
+    summary = {
+        "gradient_axis": gradient_axis,
+        "axes_results": axes_results,
+        "quartile_death_rates": quartile_rates,
+        "auc_position_only": float(auc),
+    }
+
+    return frame0, summary

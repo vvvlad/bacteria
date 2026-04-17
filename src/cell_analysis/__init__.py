@@ -1,6 +1,9 @@
 from .pipeline import (
     add_death_clustering as add_death_clustering,
+    add_fate_prediction as add_fate_prediction,
     add_fluorescence as add_fluorescence,
+    add_spatial_gradient as add_spatial_gradient,
+    filter_short_tracks as filter_short_tracks,
     add_fluorescence_concentration as add_fluorescence_concentration,
     add_fluorescence_disappearance as add_fluorescence_disappearance,
     add_geometry as add_geometry,
@@ -25,6 +28,8 @@ from .plotting import (
     plot_cells_per_frame as plot_cells_per_frame,
     plot_channels_preview as plot_channels_preview,
     plot_death_clustering as plot_death_clustering,
+    plot_fate_prediction as plot_fate_prediction,
+    plot_spatial_gradient as plot_spatial_gradient,
     plot_detections as plot_detections,
     plot_fluorescence_concentration as plot_fluorescence_concentration,
     plot_fluorescence_disappearance as plot_fluorescence_disappearance,

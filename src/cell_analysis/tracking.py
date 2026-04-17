@@ -308,14 +308,17 @@ def compute_migration_stats(tracked, per_frame=None):
         dy = np.diff(y)
         dx = np.diff(x)
         step_dists = np.sqrt(dy**2 + dx**2)
+        frame_gaps = np.diff(ts["frame"].values)
+        # Speed = displacement / frames elapsed (handles gaps from dropped frames)
+        step_speeds = step_dists / frame_gaps
 
         net = np.sqrt((y[-1] - y[0])**2 + (x[-1] - x[0])**2)
 
         records.append({
             "track_id": tid,
-            "mean_speed": float(step_dists.mean()),
-            "max_speed": float(step_dists.max()),
-            "speed_std": float(step_dists.std()),
+            "mean_speed": float(step_speeds.mean()),
+            "max_speed": float(step_speeds.max()),
+            "speed_std": float(step_speeds.std()),
             "total_displacement": float(step_dists.sum()),
             "net_displacement": float(net),
         })
@@ -324,7 +327,7 @@ def compute_migration_stats(tracked, per_frame=None):
             indices = ts.index.tolist()
             speeds_per_frame.append((indices[0], np.nan))
             for i, idx in enumerate(indices[1:]):
-                speeds_per_frame.append((idx, float(step_dists[i])))
+                speeds_per_frame.append((idx, float(step_speeds[i])))
 
     if per_frame is not None:
         speed_series = pd.Series(np.nan, index=per_frame.index, dtype=float)
