@@ -110,6 +110,25 @@ def add_geometry(tracked, track_stats):
     return tracked, track_stats
 
 
+def add_growth(tracked, track_stats):
+    """Compute per-track growth metrics and merge into track_stats.
+
+    Returns a new *track_stats* DataFrame with growth columns added.
+    """
+    from .tracking import compute_growth_stats
+
+    growth = compute_growth_stats(tracked)
+    track_stats = track_stats.merge(growth, on="track_id", how="left")
+
+    grew = track_stats["area_rel_max"].dropna()
+    print(f"Growth stats computed for {len(grew)} tracks")
+    print(f"Median max relative size: {grew.median():.2f}x")
+    print(f"Median growth rate: "
+          f"{track_stats['growth_rate_px_per_frame'].median():.1f} px/frame")
+
+    return track_stats
+
+
 def add_fluorescence(tracked, track_stats, fluor_stack, label_stack):
     """Measure fluorescence per cell and merge into tracking data.
 

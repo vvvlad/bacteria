@@ -623,6 +623,107 @@ def plot_relative_fluorescence(tracked):
     )
 
 
+def plot_growth_before_burst(tracked, track_stats):
+    """Area growth curves aligned to burst frame for disappeared cells."""
+    has_burst = track_stats[
+        track_stats["disappeared"] & track_stats["area_rel_max"].notna()
+    ]
+    if has_burst.empty:
+        print("No disappeared tracks with growth data.")
+        return
+
+    burst_frame = has_burst.set_index("track_id")["last_frame"]
+    burst_ids = burst_frame.index
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+
+    # Left: individual area curves aligned to burst
+    ax = axes[0]
+    aligned = []
+    for tid in burst_ids:
+        grp = tracked[tracked["track_id"] == tid].sort_values("frame")
+        a0 = grp["area"].iloc[0]
+        if a0 == 0:
+            continue
+        t_burst = burst_frame[tid]
+        rel_frame = grp["frame"] - t_burst
+        rel_area = grp["area"] / a0
+        aligned.append(pd.DataFrame({
+            "track_id": tid, "rel_frame": rel_frame, "area_rel": rel_area,
+        }))
+        if len(aligned) <= 30:
+            ax.plot(rel_frame, rel_area, alpha=0.15, color="tomato", linewidth=0.8)
+
+    if not aligned:
+        print("No valid growth curves.")
+        return
+
+    all_aligned = pd.concat(aligned, ignore_index=True)
+    stats = all_aligned.groupby("rel_frame")["area_rel"].agg(["mean", "sem"])
+    ax.fill_between(
+        stats.index, stats["mean"] - stats["sem"], stats["mean"] + stats["sem"],
+        color="tomato", alpha=0.3,
+    )
+    ax.plot(
+        stats.index, stats["mean"], "o-", color="tomato",
+        linewidth=2, markersize=4,
+        label=f"Mean ± SEM (n={len(aligned)})",
+    )
+    ax.axhline(1.0, color="gray", linestyle="--", alpha=0.5)
+    ax.axvline(0, color="black", linestyle=":", alpha=0.5, label="Burst frame")
+    ax.set(
+        xlabel="Frames relative to burst", ylabel="Area / Area(0)",
+        title="Cell growth aligned to burst",
+    )
+    ax.legend(fontsize=9)
+
+    # Center: growth rate distribution
+    ax = axes[1]
+    rates = has_burst["growth_rate_px_per_frame"].dropna()
+    survived_stats = track_stats[
+        ~track_stats["disappeared"] & track_stats["growth_rate_px_per_frame"].notna()
+    ]
+    survived_rates = survived_stats["growth_rate_px_per_frame"]
+
+    if len(rates) > 0:
+        sns.histplot(rates, ax=ax, color="tomato", label="Disappeared",
+                     alpha=0.6, edgecolor="white", bins=25, stat="density")
+    if len(survived_rates) > 0:
+        sns.histplot(survived_rates, ax=ax, color="steelblue", label="Survived",
+                     alpha=0.6, edgecolor="white", bins=25, stat="density")
+    ax.set(
+        xlabel="Growth rate (px/frame)", ylabel="Density",
+        title="Growth rate: disappeared vs. survived",
+    )
+    ax.legend(fontsize=9)
+
+    # Right: max relative size distribution
+    ax = axes[2]
+    burst_max = has_burst["area_rel_max"].dropna()
+    survived_max = survived_stats["area_rel_max"].dropna()
+    if len(burst_max) > 0:
+        sns.histplot(burst_max, ax=ax, color="tomato", label="Disappeared",
+                     alpha=0.6, edgecolor="white", bins=25, stat="density")
+    if len(survived_max) > 0:
+        sns.histplot(survived_max, ax=ax, color="steelblue", label="Survived",
+                     alpha=0.6, edgecolor="white", bins=25, stat="density")
+    ax.set(
+        xlabel="Max area / initial area", ylabel="Density",
+        title="Max swelling: disappeared vs. survived",
+    )
+    ax.legend(fontsize=9)
+
+    plt.tight_layout()
+
+    print(f"Disappeared tracks with growth data: {len(aligned)}")
+    print(f"Median max relative size (disappeared): {burst_max.median():.2f}x")
+    if len(survived_max) > 0:
+        print(f"Median max relative size (survived): {survived_max.median():.2f}x")
+    print(f"Median growth rate (disappeared): {rates.median():.1f} px/frame")
+    if len(survived_rates) > 0:
+        print(f"Median growth rate (survived): {survived_rates.median():.1f} px/frame")
+
+
 def plot_fluorescence_vs_volume(tracked):
     """Scatter total and mean fluorescence vs cell volume."""
     sample = tracked.dropna(subset=["total_intensity", "volume"]).sample(

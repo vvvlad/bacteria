@@ -223,6 +223,52 @@ def compute_track_stats(tracked: pd.DataFrame) -> pd.DataFrame:
     return stats
 
 
+def compute_growth_stats(tracked: pd.DataFrame) -> pd.DataFrame:
+    """Compute per-track growth metrics from area time series.
+
+    For each track, measures how much the cell grew relative to its first
+    observation, the frame at which it was largest, and a linear growth
+    rate (pixels per frame) fitted over the track's lifespan.
+
+    Parameters
+    ----------
+    tracked : pd.DataFrame
+        Must contain columns: track_id, frame, area.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per track with columns: track_id, area_initial, area_max,
+        area_rel_max (area_max / area_initial), frame_of_max_area,
+        growth_rate_px_per_frame (slope of linear fit of area vs frame).
+    """
+    records = []
+    for tid, grp in tracked.groupby("track_id"):
+        ts = grp.sort_values("frame")
+        areas = ts["area"].values.astype(np.float64)
+        frames = ts["frame"].values.astype(np.float64)
+        a0 = areas[0]
+
+        max_idx = np.argmax(areas)
+        a_max = areas[max_idx]
+
+        if len(frames) >= 2:
+            slope = np.polyfit(frames, areas, 1)[0]
+        else:
+            slope = np.nan
+
+        records.append({
+            "track_id": tid,
+            "area_initial": float(a0),
+            "area_max": float(a_max),
+            "area_rel_max": float(a_max / a0) if a0 > 0 else np.nan,
+            "frame_of_max_area": int(ts["frame"].iloc[max_idx]),
+            "growth_rate_px_per_frame": float(slope),
+        })
+
+    return pd.DataFrame(records)
+
+
 def detect_bad_frames(
     detections: pd.DataFrame,
     z_threshold: float = 3.5,

@@ -162,6 +162,19 @@ flowchart LR
     nnrm --> lnorm
 ```
 
+### Per-track growth analysis
+
+```mermaid
+flowchart LR
+    tracked["tracked DataFrame\n(area per cell per frame)"] --> grp["Group by track_id"]
+    grp --> a0["area_initial\n(first observation)"]
+    grp --> amax["area_max\n(peak area)"]
+    grp --> rel["area_rel_max\n= area_max / area_initial"]
+    grp --> fit["Linear fit\narea vs frame"]
+    fit --> rate["growth_rate_px_per_frame"]
+    amax --> fmax["frame_of_max_area"]
+```
+
 Modules in `src/cell_analysis/`: `io.py`, `segmentation.py`, `tracking.py`, `matching.py`.
 
 Notebook entry point: `notebooks/analysis.ipynb`.
@@ -360,12 +373,13 @@ flowchart TD
         p9["Fluor vs volume scatter"]
         p10["Swelling vs initial size"]
         p11["Swelling vs DNA content"]
+        p12["Growth before burst\n(aligned curves, rate & max size distributions)"]
     end
 
     run --> tc
     run --> ts
     run --> df
-    run --> p1 & p2 & p3 & p4 & p5 & p6 & p7 & p8 & p9 & p10 & p11
+    run --> p1 & p2 & p3 & p4 & p5 & p6 & p7 & p8 & p9 & p10 & p11 & p12
 ```
 
 #### `tracked_cells.csv`
@@ -410,6 +424,11 @@ One row per track. Columns:
 | `mean_fluor_total` | Time-averaged total fluorescence |
 | `mean_cv` | Time-averaged CV |
 | `mean_nnrm` | Time-averaged nNRM |
+| `area_initial` | Cell area (pixels) at first detection |
+| `area_max` | Peak cell area (pixels) over track lifetime |
+| `area_rel_max` | Peak area / initial area (growth factor) |
+| `frame_of_max_area` | Frame at which cell reached peak size |
+| `growth_rate_px_per_frame` | Linear growth rate (slope of area vs frame) |
 | `fluor_disappearance_frame` | Frame of largest fluorescence drop (if > threshold) |
 | `max_drop` | Largest single-frame relative drop in total intensity |
 
@@ -605,3 +624,9 @@ Chronological record of completed work.
 - [x] CV and nNRM temporal trends, disappeared vs. survived comparison
 - [x] Lifespan-normalized dynamics
 - [x] Swelling rate/extent dependence on DNA content
+
+### Phase 5: Growth Analysis
+
+- [x] Per-track growth metrics: initial area, peak area, relative max size, growth rate (linear fit)
+- [x] `compute_growth_stats()` in tracking module, `add_growth()` pipeline function
+- [x] Growth-before-burst visualization: area curves aligned to burst frame, growth rate and max size distributions (disappeared vs survived)
