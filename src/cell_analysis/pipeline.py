@@ -190,7 +190,8 @@ def add_fluorescence(tracked, track_stats, fluor_stack, label_stack):
     return tracked, track_stats
 
 
-def add_fluorescence_disappearance(tracked, track_stats, threshold=-0.3):
+def add_fluorescence_disappearance(tracked, track_stats, threshold=-0.3,
+                                    drop_window=1):
     """Detect per-track fluorescence disappearance and merge into track_stats.
 
     Returns a new *track_stats* DataFrame with fluor_disappearance_frame
@@ -199,12 +200,13 @@ def add_fluorescence_disappearance(tracked, track_stats, threshold=-0.3):
     from .matching import detect_fluorescence_disappearance
 
     fluor_disapp = detect_fluorescence_disappearance(
-        tracked, threshold=threshold,
+        tracked, threshold=threshold, drop_window=drop_window,
     )
     n_detected = fluor_disapp["fluor_disappearance_frame"].notna().sum()
+    window_label = "single-frame" if drop_window == 1 else f"{drop_window}-frame"
     print(f"Fluorescence disappearance detected: "
           f"{n_detected}/{len(fluor_disapp)} tracks "
-          f"(threshold: {threshold:.0%} single-frame drop)")
+          f"(threshold: {threshold:.0%} {window_label} drop)")
 
     track_stats = track_stats.merge(fluor_disapp, on="track_id", how="left")
     return track_stats
@@ -480,3 +482,52 @@ def run_nucleus_persistence(label_stack, nucleus_label_stack,
     }
 
     return df, summary
+
+
+def export_all_results(
+    results_dir, *,
+    tracked, track_stats, diagnostics,
+    merge_log, prediction_df, prediction_summary,
+    gradient_df, gradient_summary,
+    clustering_result, comparison_df, persistence_summary,
+):
+    """Save all analysis outputs to *results_dir* as CSV files.
+
+    DataFrames are saved directly; summary dicts are flattened to
+    single-row CSVs.
+    """
+    from .io import save_results, save_summary
+    from pathlib import Path
+
+    results_dir = Path(results_dir)
+    saved = []
+
+    for df, name in [
+        (tracked, "tracked_cells.csv"),
+        (track_stats, "track_statistics.csv"),
+        (diagnostics, "frame_diagnostics.csv"),
+        (prediction_df, "fate_predictions.csv"),
+        (gradient_df, "spatial_gradient.csv"),
+        (comparison_df, "nucleus_persistence.csv"),
+    ]:
+        save_results(df, results_dir / name)
+        saved.append(name)
+
+    if not merge_log.empty:
+        save_results(merge_log, results_dir / "merge_log.csv")
+        saved.append("merge_log.csv")
+
+    for summary, name in [
+        (clustering_result, "clustering_summary.csv"),
+        (prediction_summary, "fate_prediction_summary.csv"),
+        (gradient_summary, "spatial_gradient_summary.csv"),
+        (persistence_summary, "nucleus_persistence_summary.csv"),
+    ]:
+        save_summary(summary, results_dir / name)
+        saved.append(name)
+
+    print(f"Saved {len(saved)} files to {results_dir}/")
+    for name in saved:
+        print(f"  {name}")
+
+    return saved

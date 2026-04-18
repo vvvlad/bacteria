@@ -15,6 +15,7 @@ from .pipeline import (
     load_experiment as load_experiment,
     run_frame_gating as run_frame_gating,
     run_nucleus_persistence as run_nucleus_persistence,
+    export_all_results as export_all_results,
     run_tracking as run_tracking,
 )
 from .segmentation import (
@@ -22,7 +23,7 @@ from .segmentation import (
     detect_cells_stack as detect_cells_stack,
     detect_nuclei_stack as detect_nuclei_stack,
 )
-from .io import save_results as save_results
+from .io import save_results as save_results, save_summary as save_summary
 from .plotting import (
     plot_area_distribution as plot_area_distribution,
     plot_cells_per_frame as plot_cells_per_frame,
@@ -48,4 +49,5 @@ from .plotting import (
     plot_sav_ratio as plot_sav_ratio,
     plot_swelling_dynamics as plot_swelling_dynamics,
     plot_swelling_vs_survival as plot_swelling_vs_survival,
+    plot_initial_features_vs_lifespan as plot_initial_features_vs_lifespan,
 )

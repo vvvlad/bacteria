@@ -59,3 +59,29 @@ def save_results(df, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False)
+
+
+def save_summary(data: dict, path: str | Path) -> None:
+    """Flatten a nested summary dict and save as a single-row CSV.
+
+    Recursively flattens nested dicts into underscore-joined column names.
+    Skips array-like values (e.g. null distributions) that don't fit a
+    single-row tabular format.
+    """
+    import pandas as pd
+
+    def _flatten(d, prefix=""):
+        flat = {}
+        for k, v in d.items():
+            key = f"{prefix}{k}" if prefix else k
+            if isinstance(v, dict):
+                flat.update(_flatten(v, prefix=f"{key}_"))
+            elif hasattr(v, "__len__") and not isinstance(v, str):
+                continue
+            else:
+                flat[key] = v
+        return flat
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([_flatten(data)]).to_csv(path, index=False)

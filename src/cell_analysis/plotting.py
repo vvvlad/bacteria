@@ -201,6 +201,10 @@ def plot_lifetime_distribution(track_stats):
     print(f"Total tracks: {len(track_stats)}")
     print(f"Survived to final frame: {len(survivors)} ({fraction_survived:.1%})")
     print(f"Disappeared: {len(disappeared)} ({1 - fraction_survived:.1%})")
+    if len(disappeared) > 0:
+        d_life = disappeared["lifetime"]
+        print(f"Disappeared lifetime — median: {d_life.median():.0f}, "
+              f"mean: {d_life.mean():.1f} ± {d_life.std():.1f} frames")
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 5))
 
@@ -453,6 +457,10 @@ def plot_swelling_vs_survival(tracked):
     n_surv = per_track["survived"].sum()
     n_dis = (~per_track["survived"]).sum()
     print(f"Frame-0 cohort: {n_surv} survived, {n_dis} disappeared")
+    v0_surv = per_track.loc[per_track["survived"], "V0"]
+    v0_dis = per_track.loc[~per_track["survived"], "V0"]
+    print(f"Mean initial volume (survived):    {v0_surv.mean():.0f} ± {v0_surv.std():.0f} px³")
+    print(f"Mean initial volume (disappeared): {v0_dis.mean():.0f} ± {v0_dis.std():.0f} px³")
     print(
         f"Median max swelling (survived):    "
         f"{per_track.loc[per_track['survived'], 'V_rel_max'].median():.3f}x"
@@ -732,8 +740,10 @@ def plot_growth_before_burst(tracked, track_stats):
 
 
 def plot_nucleus_persistence(comparison_df):
-    """2-panel: phase vs fluor counts over time, and offset stability."""
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    """3-panel: counts over time, offset stability, and count correlation."""
+    from scipy.stats import pearsonr
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
 
     ax = axes[0]
     ax.plot(
@@ -766,7 +776,26 @@ def plot_nucleus_persistence(comparison_df):
     ax.set_xticks(comparison_df["frame"])
     ax.legend(fontsize=10)
 
+    ax = axes[2]
+    ax.scatter(
+        comparison_df["phase_cells"], comparison_df["fluor_nuclei"],
+        c=comparison_df["frame"], cmap="viridis", s=40, edgecolors="k",
+        linewidths=0.5, zorder=3,
+    )
+    r, p = pearsonr(comparison_df["phase_cells"], comparison_df["fluor_nuclei"])
+    lo = min(comparison_df["phase_cells"].min(), comparison_df["fluor_nuclei"].min())
+    hi = max(comparison_df["phase_cells"].max(), comparison_df["fluor_nuclei"].max())
+    ax.plot([lo, hi], [lo, hi], "k--", alpha=0.3, label="1:1 line")
+    ax.set(
+        xlabel="Phase-contrast cell count",
+        ylabel="Fluorescence nucleus count",
+        title=f"Count correlation (r = {r:.3f}, p = {p:.2e})",
+    )
+    ax.legend(fontsize=9)
+    fig.colorbar(ax.collections[0], ax=ax, label="Frame")
+
     plt.tight_layout()
+    print(f"Phase vs fluor count: Pearson r = {r:.3f}, p = {p:.2e}")
 
 
 def plot_fluorescence_concentration(tracked):
@@ -1316,37 +1345,44 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
     ax.set_xticks(per_frame.index)
     ax.legend(fontsize=9)
 
-    # Center: lifespan-normalized
+    # Center: lifespan-normalized, split by fate
     ax = axes[1]
     n_bins = 20
-    norm_parts = []
-    for tid, grp in tracked.groupby("track_id"):
-        grp = grp.sort_values("frame")
-        if len(grp) < 2:
-            continue
-        first, last = grp["frame"].iloc[0], grp["frame"].iloc[-1]
-        if first == last:
-            continue
-        grp = grp.copy()
-        grp["t_norm"] = (grp["frame"] - first) / (last - first)
-        norm_parts.append(grp[["track_id", "t_norm", metric]])
-
-    norm_df = pd.concat(norm_parts, ignore_index=True)
-    norm_df["bin"] = pd.cut(norm_df["t_norm"], bins=n_bins, labels=False)
+    survived_ids, disappeared_ids = _survival_split(tracked)
     bin_centers = np.linspace(0.5 / n_bins, 1 - 0.5 / n_bins, n_bins)
-    bin_stats = norm_df.groupby("bin")[metric].agg(["mean", "sem"])
 
-    ax.fill_between(
-        bin_centers,
-        bin_stats["mean"] - bin_stats["sem"],
-        bin_stats["mean"] + bin_stats["sem"],
-        color=color, alpha=0.3,
-    )
-    ax.plot(
-        bin_centers, bin_stats["mean"], "o-", color=color,
-        linewidth=2, markersize=4,
-        label=f"Mean +/- SEM (n={norm_df['track_id'].nunique()} tracks)",
-    )
+    for grp_label, ids, clr in [
+        ("Survived", survived_ids, "steelblue"),
+        ("Disappeared", disappeared_ids, "tomato"),
+    ]:
+        norm_parts = []
+        for tid, grp in tracked[tracked["track_id"].isin(ids)].groupby("track_id"):
+            grp = grp.sort_values("frame")
+            if len(grp) < 2:
+                continue
+            first, last = grp["frame"].iloc[0], grp["frame"].iloc[-1]
+            if first == last:
+                continue
+            grp = grp.copy()
+            grp["t_norm"] = (grp["frame"] - first) / (last - first)
+            norm_parts.append(grp[["track_id", "t_norm", metric]])
+        if not norm_parts:
+            continue
+        norm_df = pd.concat(norm_parts, ignore_index=True)
+        norm_df["bin"] = pd.cut(norm_df["t_norm"], bins=n_bins, labels=False)
+        bin_stats = norm_df.groupby("bin")[metric].agg(["mean", "sem"])
+        ax.fill_between(
+            bin_centers,
+            bin_stats["mean"] - bin_stats["sem"],
+            bin_stats["mean"] + bin_stats["sem"],
+            color=clr, alpha=0.2,
+        )
+        n_tracks = norm_df["track_id"].nunique()
+        ax.plot(
+            bin_centers, bin_stats["mean"], "o-", color=clr,
+            linewidth=2, markersize=4,
+            label=f"{grp_label} (n={n_tracks})",
+        )
     ax.set(
         xlabel="Relative lifespan (0=start, 1=end)", ylabel=label,
         title=f"{label} over normalized lifespan",
@@ -1355,7 +1391,6 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
 
     # Right: outcome split (frame-0 cohort)
     ax = axes[2]
-    survived_ids, disappeared_ids = _survival_split(tracked)
     _outcome_split_panel(ax, tracked, metric, survived_ids, disappeared_ids)
     ax.set(
         xlabel="Frame", ylabel=label,
@@ -1448,3 +1483,49 @@ def plot_fluorescence_disappearance(tracked, track_stats, threshold=-0.3):
         print(f"  Fluor drop AFTER (shouldn't happen): {after}")
 
     plt.tight_layout()
+
+
+def plot_initial_features_vs_lifespan(tracked, track_stats):
+    """3-panel scatter: frame-0 fluorescence, CV, nNRM vs track lifetime."""
+    from scipy.stats import spearmanr
+
+    frame0_tracks = _frame0_track_ids(tracked)
+    cohort = tracked[tracked["track_id"].isin(frame0_tracks)].copy()
+    first_obs = cohort.sort_values("frame").groupby("track_id").first()
+
+    df = first_obs[["mean_intensity", "cv", "nnrm"]].copy()
+    df = df.merge(
+        track_stats[["track_id", "lifetime", "disappeared"]].set_index("track_id"),
+        left_index=True, right_index=True,
+    )
+    df = df.dropna(subset=["mean_intensity", "cv", "nnrm"])
+
+    metrics = [
+        ("mean_intensity", "Initial fluorescence"),
+        ("cv", "Initial CV"),
+        ("nnrm", "Initial nNRM"),
+    ]
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+    corr_results = []
+    for ax, (col, title) in zip(axes, metrics):
+        colors = df["disappeared"].map({True: "tomato", False: "steelblue"})
+        ax.scatter(
+            df[col], df["lifetime"],
+            c=colors, alpha=0.5, s=20, edgecolors="none",
+        )
+        r, p = spearmanr(df[col], df["lifetime"])
+        corr_results.append((title, r, p))
+        ax.set(
+            xlabel=title, ylabel="Lifetime (frames)",
+            title=f"{title} vs. lifespan (rho={r:.3f}, p={p:.2e})",
+        )
+
+    axes[0].scatter([], [], c="steelblue", s=20, label="Survived")
+    axes[0].scatter([], [], c="tomato", s=20, label="Disappeared")
+    axes[0].legend(fontsize=9)
+
+    plt.tight_layout()
+
+    for title, r, p in corr_results:
+        print(f"{title} vs lifetime: Spearman rho = {r:.3f}, p = {p:.2e}")

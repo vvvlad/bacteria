@@ -155,13 +155,14 @@ def measure_fluorescence(
 def detect_fluorescence_disappearance(
     tracked: pd.DataFrame,
     threshold: float = -0.5,
+    drop_window: int = 1,
 ) -> pd.DataFrame:
     """Detect per-track fluorescence disappearance frame.
 
     For each track, finds the frame where total fluorescence intensity
-    has the largest single-frame relative drop. If the drop exceeds
-    *threshold* (negative), that frame is flagged as the fluorescence
-    disappearance frame.
+    has the largest relative drop over *drop_window* consecutive frames.
+    If the drop exceeds *threshold* (negative), that frame is flagged as
+    the fluorescence disappearance frame.
 
     Parameters
     ----------
@@ -170,6 +171,9 @@ def detect_fluorescence_disappearance(
     threshold : float
         Minimum relative change to count as disappearance (e.g., -0.5
         means a 50% drop). Tuned empirically.
+    drop_window : int
+        Number of frames over which to measure the cumulative drop.
+        1 = single-frame drop (default), 2 = two-frame cumulative drop.
 
     Returns
     -------
@@ -181,12 +185,12 @@ def detect_fluorescence_disappearance(
     results = []
     for tid, grp in tracked.groupby("track_id"):
         ts = grp.sort_values("frame")[["frame", "total_intensity"]].copy()
-        if len(ts) < 2:
+        if len(ts) < drop_window + 1:
             results.append({"track_id": tid, "fluor_disappearance_frame": np.nan,
                             "max_drop": np.nan})
             continue
 
-        ts["prev"] = ts["total_intensity"].shift(1)
+        ts["prev"] = ts["total_intensity"].shift(drop_window)
         ts["rel_change"] = (ts["total_intensity"] - ts["prev"]) / ts["prev"]
         ts = ts.dropna(subset=["rel_change"])
 

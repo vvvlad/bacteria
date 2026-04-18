@@ -797,3 +797,26 @@ Chronological record of completed work.
 - [x] 5 unit tests passing (output structure, detects X gradient, quartile rates increase, AUC > random, counts sum)
 - [x] 50 tests total passing
 - [x] Documented 5 future research directions: spatial gradient analysis, survival analysis (Kaplan-Meier/Cox PH), dynamic trajectory features, critical membrane threshold testing, neighborhood effects beyond gradient
+
+### Reviewer feedback implementation (2026-04-18)
+
+Addressed reviewer comments on phase-contrast and fluorescence analysis:
+
+**Phase Contrast:**
+- [x] PC-1: `plot_lifetime_distribution()` now prints median/mean±SD lifetime for disappeared cells only
+- [x] PC-2: `plot_swelling_vs_survival()` now prints mean initial volume ± SD split by survived vs disappeared
+- PC-3 (swelling dynamics discrepancy): was already documented in notebook heading 6.5 — no action needed
+
+**Fluorescence:**
+- FL-1a (Fl per cell vs frame): already implemented — `plot_fluorescence_per_frame` uses per-cell `mean_intensity`, not total population sum
+- [x] FL-1b: `plot_nucleus_persistence()` expanded from 2-panel to 3-panel — added scatter of phase cell count vs fluorescence nucleus count with Pearson r and 1:1 reference line
+- [x] FL-2: `plot_metric_dynamics()` center panel (lifespan-normalized) now splits by survived vs disappeared instead of showing all tracks combined. Both cohorts shown with independent SEM bands
+- [x] FL-3: `detect_fluorescence_disappearance()` now accepts `drop_window` parameter (default 1). With `drop_window=2`, measures cumulative relative drop over 2 consecutive frames instead of single-frame drops. Captures slower fluorescence loss where DNA exits membrane pores more slowly than proteins. Pipeline wrapper `add_fluorescence_disappearance()` passes through. Notebook config sets `FLUOR_DROP_WINDOW = 2`
+- [x] FL-4: New `plot_initial_features_vs_lifespan()` — 3-panel scatter of frame-0 fluorescence intensity, CV, and nNRM vs track lifetime, colored by fate (survived/disappeared). Reports Spearman rho + p-value for each. Added as notebook section 8.17
+
+**Files changed:**
+- `src/cell_analysis/plotting.py` — PC-1, PC-2, FL-1b, FL-2, FL-4
+- `src/cell_analysis/matching.py` — FL-3 (`drop_window` parameter)
+- `src/cell_analysis/pipeline.py` — FL-3 (passthrough)
+- `src/cell_analysis/__init__.py` — FL-4 (export)
+- `notebooks/analysis.ipynb` — all: imports, config, cells, TOC
