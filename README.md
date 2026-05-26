@@ -132,16 +132,26 @@ This reads `pyproject.toml` and `uv.lock`, creates a `.venv/` directory, and ins
 
 This ensures both the editor and Jupyter notebooks use the project's virtual environment.
 
-### 10. Open and Run the Notebook
+### 10. Run an Experiment
 
-1. Open `notebooks/analysis.ipynb` in VS Code
-2. When prompted, select the kernel from `.venv`
-3. Place your TIFF stack(s) in `data/raw/`
-4. Run cells with **Shift+Enter**
+Place your TIFF stacks in a folder under `data/` (e.g. `data/my_experiment/phase.tif` and `fluorescence.tif`), then copy and edit a config:
+
+```bash
+cp configs/run_01.yaml configs/my_experiment.yaml
+# Edit configs/my_experiment.yaml: update RUN_NAME, STACK_PATH, FLUOR_PATH
+```
+
+Run the experiment:
+
+```bash
+uv run python scripts/run_experiment.py configs/my_experiment.yaml
+```
+
+Results (HTML report + CSVs) are saved to `results/<run_name>/`.
 
 ### Notes
 
-- **Apple Silicon (M1/M2/M3):** Cellpose GPU acceleration is not supported on Apple Silicon. The pipeline runs on CPU by default (`gpu=False`). First run downloads the Cellpose model (~1 GB).
+- **Apple Silicon (M1/M2/M3):** Cellpose uses MPS GPU acceleration on Apple Silicon when `gpu: true`. First run downloads the Cellpose model (~1 GB).
 - **Large files:** Raw TIFF stacks can be 50-100+ MB per stack. They are excluded from git via `.gitignore`.
 
 </details>
@@ -244,16 +254,26 @@ This reads `pyproject.toml` and `uv.lock`, creates a `.venv\` directory, and ins
 
 This ensures both the editor and Jupyter notebooks use the project's virtual environment.
 
-### 9. Open and Run the Notebook
+### 9. Run an Experiment
 
-1. Open `notebooks/analysis.ipynb` in VS Code
-2. When prompted, select the kernel from `.venv`
-3. Place your TIFF stack(s) in `data\raw\`
-4. Run cells with **Shift+Enter**
+Place your TIFF stacks in a folder under `data\` (e.g. `data\my_experiment\phase.tif` and `fluorescence.tif`), then copy and edit a config:
+
+```powershell
+Copy-Item configs\run_01.yaml configs\my_experiment.yaml
+# Edit configs\my_experiment.yaml: update RUN_NAME, STACK_PATH, FLUOR_PATH
+```
+
+Run the experiment:
+
+```powershell
+uv run python scripts\run_experiment.py configs\my_experiment.yaml
+```
+
+Results (HTML report + CSVs) are saved to `results\<run_name>\`.
 
 ### Notes
 
-- **NVIDIA GPU (optional):** If you have an NVIDIA GPU with CUDA drivers, you can pass `gpu=True` to the detection functions for faster Cellpose inference. This is not required — CPU mode works fine.
+- **NVIDIA GPU (optional):** If you have an NVIDIA GPU with CUDA drivers, set `gpu: true` in the config for faster Cellpose inference. CPU mode works fine without it.
 - **First run:** Cellpose downloads its pretrained model (~1 GB) on first use. Make sure you have a stable internet connection.
 - **Large files:** Raw TIFF stacks can be 50-100+ MB per stack. They are excluded from git via `.gitignore`.
 - **Long paths:** If you encounter path-length errors, enable long paths in Windows:
@@ -269,57 +289,129 @@ This ensures both the editor and Jupyter notebooks use the project's virtual env
 
 ```
 bacteria/
+├── configs/
+│   └── run_01.yaml           # One YAML config per experiment
 ├── data/
-│   ├── raw/           # Raw TIFF stacks (not tracked by git)
-│   └── processed/     # Intermediate outputs (not tracked by git)
+│   └── gradient_0011/        # One folder per dataset
+│       ├── phase.tif         # Phase-contrast channel
+│       └── fluorescence.tif  # Fluorescence channel (background-subtracted)
 ├── notebooks/
-│   └── analysis.ipynb # Main analysis notebook
-├── results/           # Exported CSVs (not tracked by git)
+│   └── analysis.ipynb        # Analysis notebook (also papermill template)
+├── results/
+│   └── run_01/               # One folder per run
+│       ├── report.html       # Self-contained HTML report with all plots
+│       ├── config.yaml       # Frozen copy of config used
+│       ├── tracked_cells.csv # Per-cell per-frame data
+│       └── ...               # Other CSV outputs
 ├── scripts/
-│   └── diagnostic_overlay.py  # Visual debugging of detection filters
+│   ├── run_experiment.py     # CLI runner (papermill + HTML export)
+│   └── diagnostic_overlay.py # Visual debugging of detection filters
 ├── src/
 │   └── cell_analysis/
 │       ├── __init__.py
-│       ├── io.py            # TIFF loading and CSV export
-│       ├── segmentation.py  # Cell detection (Cellpose + classical)
-│       ├── tracking.py      # Temporal linking with trackpy
-│       └── matching.py      # Phase-to-fluorescence cell matching
+│       ├── io.py             # TIFF loading and CSV export
+│       ├── segmentation.py   # Cell detection (Cellpose + classical)
+│       ├── tracking.py       # Temporal linking with trackpy
+│       ├── matching.py       # Phase-to-fluorescence cell matching
+│       ├── pipeline.py       # High-level pipeline orchestration
+│       └── plotting.py       # All visualization functions
+├── tests/
 ├── .gitignore
 ├── pyproject.toml
 └── uv.lock
 ```
 
-## Input Data
+## Adding a New Dataset
 
-Place your microscopy TIFF stacks in `data/raw/`. Expected formats:
+Create a folder under `data/` with a descriptive name and place the two TIFF stacks inside:
 
-- **Single-channel:** shape `(T, Y, X)` — e.g. 25 frames of 1040x1388 pixels
-- **Multi-channel:** shape `(T, C, Y, X)` — phase-contrast + fluorescence
+```
+data/
+  my_new_experiment/
+    phase.tif            # Phase-contrast channel
+    fluorescence.tif     # Fluorescence channel (background-subtracted)
+```
+
+Expected TIFF formats:
+
+- **Shape:** `(T, Y, X)` — e.g. 25 frames of 1040x1388 pixels
+- **Multi-channel:** `(T, C, Y, X)` is also supported (first channel is used)
 - **Bit depth:** uint8 or uint16
 
-## Detection Parameters
+Then create a config file (copy `configs/run_01.yaml` and update the paths and run name).
 
-The notebook defines tunable parameters at the top:
+## Running Experiments
+
+### Via CLI (recommended)
+
+Run an experiment by passing its YAML config to the runner script:
+
+```bash
+uv run python scripts/run_experiment.py configs/run_01.yaml
+```
+
+This executes the notebook via papermill, generates an HTML report with all plots, and saves CSV results to `results/<run_name>/`.
+
+To re-run all experiments (e.g. after a pipeline update):
+
+```bash
+uv run python scripts/run_experiment.py configs/*.yaml
+```
+
+The script exits with code 0 if all runs succeed, or 1 if any fail.
+
+### Via Jupyter (interactive)
+
+For development or one-off analysis, open the notebook directly:
+
+```bash
+uv run jupyter lab notebooks/analysis.ipynb
+```
+
+Edit the parameters cell at the top and run all cells. The notebook is also the template used by the CLI runner.
+
+## Config Parameters
+
+All parameters are set in the YAML config file (or the notebook's parameters cell). See `configs/run_01.yaml` for a complete example.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `diameter` | 32 | Median cell diameter in pixels |
-| `min_area` | 300 | Minimum cell area (rejects debris) |
-| `min_circularity` | 0.7 | Minimum circularity (1.0 = perfect circle) |
-| `min_contrast` | 1550 | Minimum intensity std-dev (rejects faded cells) |
-| `gpu` | True | Enable GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA) |
-| `search_range` | 30.0 | Max cell displacement between frames (pixels) |
-| `memory` | 3 | Frames a cell can disappear before breaking the track |
-| `TRIM_FRAMES` | 2 | Initial frames to discard before detection (e.g. out-of-focus frames) |
+| `RUN_NAME` | `run_01` | Unique name; results saved to `results/<RUN_NAME>/` |
+| `STACK_PATH` | — | Path to phase-contrast TIFF (relative to `notebooks/`) |
+| `FLUOR_PATH` | — | Path to fluorescence TIFF (relative to `notebooks/`) |
+| `DETECT_PARAMS.diameter` | 32 | Median cell diameter in pixels |
+| `DETECT_PARAMS.min_area` | 300 | Minimum cell area (rejects debris) |
+| `DETECT_PARAMS.min_circularity` | 0.7 | Minimum circularity (1.0 = perfect circle) |
+| `DETECT_PARAMS.min_contrast` | 1250 | Minimum intensity contrast (rejects faded cells) |
+| `DETECT_PARAMS.gpu` | true | GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA) |
+| `SEARCH_RANGE` | 30.0 | Max cell displacement between frames (pixels) |
+| `MEMORY` | 3 | Frames a cell can disappear before breaking the track |
 | `MERGE_MAX_DISTANCE` | 15.0 | Max pixels between track end/start to merge fragments |
 | `MERGE_MAX_GAP` | 18 | Max frame gap for fragment merging |
+| `MIN_TRACK_DETECTIONS` | 4 | Minimum frames a track must span to be kept |
+| `GATING_Z_THRESHOLD` | 3.5 | MAD-based Z-score threshold for flagging bad frames |
+| `FLUOR_DROP_THRESHOLD` | -0.3 | Fluorescence drop threshold for disappearance detection |
+| `FLUOR_DROP_WINDOW` | 2 | Frames over which to measure cumulative fluorescence drop |
 
 ## Output
 
-The pipeline exports two CSV files to `results/`:
+Each run produces results in `results/<run_name>/`:
 
-- **`tracked_cells.csv`** — per-cell, per-frame data including track ID, centroid coordinates, and area
-- **`track_statistics.csv`** — per-track summary: lifetime, mean area, disappearance flag
+| File | Description |
+|------|-------------|
+| `report.html` | Self-contained HTML report with all plots and statistics |
+| `config.yaml` | Frozen copy of the YAML config used for this run |
+| `tracked_cells.csv` | Per-cell per-frame: morphology, fluorescence, speed, SA:V ratio |
+| `track_statistics.csv` | Per-track summary: lifetime, growth, fluorescence, migration |
+| `frame_diagnostics.csv` | Per-frame detection statistics and quality gating flags |
+| `merge_log.csv` | Track merging audit log |
+| `fate_predictions.csv` | Per-cell predicted death probability (frame-0 cohort) |
+| `fate_prediction_summary.csv` | Model AUC, accuracy, per-feature coefficients |
+| `spatial_gradient.csv` | Per-cell position with fate and gradient quartile |
+| `spatial_gradient_summary.csv` | Per-axis gradient statistics |
+| `clustering_summary.csv` | Spatial clustering test results |
+| `nucleus_persistence.csv` | Per-frame phase cell vs fluorescence nucleus counts |
+| `nucleus_persistence_summary.csv` | Nucleus persistence conclusion |
 
 ## Diagnostic Overlay
 
@@ -406,7 +498,7 @@ The overlay is designed for an iterative tuning workflow:
 
 5. **Check for false positives.** If relaxing a threshold lets in debris or halos (red X on non-cells), tighten the threshold back.
 
-6. **Once satisfied**, update `DETECT_PARAMS` in `notebooks/analysis.ipynb` with the tuned values and re-run the full pipeline.
+6. **Once satisfied**, update `DETECT_PARAMS` in your config YAML (e.g. `configs/run_01.yaml`) with the tuned values and re-run.
 
 The script also prints a rejection reason summary to the terminal:
 
@@ -426,13 +518,13 @@ This tells you at a glance which filter is rejecting the most cells, helping you
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--stack` | `data/raw/Gradient-0011.zvi  Ch0.tif` | Path to the TIFF stack |
+| `--stack` | `data/gradient_0011/phase.tif` | Path to the TIFF stack |
 | `--frame` | `0` | Frame index to analyse |
 | `--outdir` | `results` | Output directory for PNG files |
 | `--diameter` | `32` | Cellpose cell diameter |
 | `--min_area` | `300` | Minimum cell area in pixels |
 | `--min_circularity` | `0.7` | Minimum circularity (0-1) |
-| `--min_contrast` | `1550` | Minimum intensity std-dev |
+| `--min_contrast` | `1250` | Minimum intensity std-dev |
 | `--exclude_edges` / `--no_exclude_edges` | `True` | Include/exclude border cells |
 | `--gpu` / `--no_gpu` | `True` | Enable/disable GPU |
 | `--resample` | `False` | Resample masks (slower, more precise boundaries) |
