@@ -123,6 +123,64 @@ def run_single_config(config_path):
     return not failed
 
 
+def publish_reports():
+    docs_dir = REPO_ROOT / "docs" / "reports"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    results_dir = REPO_ROOT / "results"
+    runs = []
+    for run_dir in sorted(results_dir.iterdir()):
+        report = run_dir / "report.html"
+        config = run_dir / "config.yaml"
+        if not report.exists():
+            continue
+        target = docs_dir / run_dir.name
+        target.mkdir(parents=True, exist_ok=True)
+        shutil.copy(report, target / "report.html")
+        run_info = {"name": run_dir.name, "date": report.stat().st_mtime}
+        if config.exists():
+            with open(config) as f:
+                cfg = yaml.safe_load(f) or {}
+            run_info["dataset"] = Path(cfg.get("STACK_PATH", "")).parent.name
+        runs.append(run_info)
+
+    from datetime import datetime
+    rows = ""
+    for r in runs:
+        date = datetime.fromtimestamp(r["date"]).strftime("%Y-%m-%d %H:%M")
+        dataset = r.get("dataset", "")
+        rows += (f'      <tr><td><a href="{r["name"]}/report.html">{r["name"]}</a>'
+                 f"</td><td>{dataset}</td><td>{date}</td></tr>\n")
+
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Experiment Reports</title>
+<style>
+  body {{ font-family: -apple-system, system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; }}
+  table {{ border-collapse: collapse; width: 100%; }}
+  th, td {{ text-align: left; padding: 8px 12px; border-bottom: 1px solid #ddd; }}
+  th {{ background: #f5f5f5; }}
+  a {{ color: #0366d6; text-decoration: none; }}
+  a:hover {{ text-decoration: underline; }}
+</style>
+</head>
+<body>
+<h1>Experiment Reports</h1>
+<table>
+  <thead><tr><th>Run</th><th>Dataset</th><th>Date</th></tr></thead>
+  <tbody>
+{rows}  </tbody>
+</table>
+</body>
+</html>"""
+
+    (docs_dir / "index.html").write_text(html, encoding="utf-8")
+    print(f"Published {len(runs)} reports to docs/reports/")
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: run_experiment.py <config.yaml> [config2.yaml ...]")
@@ -152,6 +210,8 @@ def main():
             elif status == "FAILED":
                 suffix = f" (see results/{run_name}/report.html)"
             print(f"  {run_name}: {status}{suffix}")
+
+    publish_reports()
 
     any_failed = any(s != "OK" for s, _ in results.values())
     sys.exit(1 if any_failed else 0)
