@@ -1,6 +1,6 @@
 RUN_NAME: "run_01"
-STACK_PATH: "../data/gradient_0011/phase.tif"
-FLUOR_PATH: "../data/gradient_0011/fluorescence.tif"
+STACK_PATH: "../data/gradient_0011/Gradient-0011.zvi  Ch0.tif"
+FLUOR_PATH: "../data/gradient_0011/Gradient-0011.zvi  Ch1-BG.tif"
 
 GATING_Z_THRESHOLD: 3.5
 
