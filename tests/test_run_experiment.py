@@ -9,8 +9,8 @@ from run_experiment import validate_config
 
 VALID_CONFIG = {
     "RUN_NAME": "run_01",
-    "STACK_PATH": "../data/raw/test.tif",
-    "FLUOR_PATH": "../data/raw/test_fluor.tif",
+    "STACK_PATH": "../data/test_dataset/phase.tif",
+    "FLUOR_PATH": "../data/test_dataset/fluorescence.tif",
     "GATING_Z_THRESHOLD": 3.5,
     "DETECT_PARAMS": {
         "diameter": 32,
@@ -38,8 +38,8 @@ def test_valid_config_passes():
 def test_minimal_config_passes():
     minimal = {
         "RUN_NAME": "run_01",
-        "STACK_PATH": "../data/raw/test.tif",
-        "FLUOR_PATH": "../data/raw/test_fluor.tif",
+        "STACK_PATH": "../data/test_dataset/phase.tif",
+        "FLUOR_PATH": "../data/test_dataset/fluorescence.tif",
     }
     validate_config(minimal)
 

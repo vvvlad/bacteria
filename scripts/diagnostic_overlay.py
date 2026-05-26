@@ -50,7 +50,7 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    p.add_argument("--stack", default="data/raw/Gradient-0011.zvi  Ch0.tif",
+    p.add_argument("--stack", default="data/gradient_0011/phase.tif",
                     help="Path to the TIF stack (default: %(default)s)")
     p.add_argument("--frame", type=int, default=0,
                     help="Frame index to analyse (default: 0)")
