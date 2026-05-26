@@ -19,6 +19,9 @@ dependencies = [
     "laptrack",
     "jupyterlab",
     "ipywidgets",
+    "papermill",
+    "pyyaml",
+    "nbconvert",
 ]
 
 [project.optional-dependencies]
