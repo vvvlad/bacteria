@@ -13,7 +13,7 @@ from nbconvert import HTMLExporter
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 ALLOWED_KEYS = {
-    "RUN_NAME", "STACK_PATH", "FLUOR_PATH",
+    "RUN_NAME", "STACK_PATH", "FLUOR_PATH", "CONFIG_PATH",
     "GATING_Z_THRESHOLD",
     "DETECT_PARAMS",
     "SEARCH_RANGE", "MEMORY",
@@ -28,6 +28,7 @@ TYPE_RULES = {
     "RUN_NAME": str,
     "STACK_PATH": str,
     "FLUOR_PATH": str,
+    "CONFIG_PATH": str,
     "GATING_Z_THRESHOLD": (int, float),
     "DETECT_PARAMS": dict,
     "SEARCH_RANGE": (int, float),
@@ -81,6 +82,8 @@ def run_single_config(config_path):
         config = yaml.safe_load(f)
 
     validate_config(config)
+
+    config["CONFIG_PATH"] = str(config_path)
 
     run_name = config["RUN_NAME"]
     notebook_path = REPO_ROOT / "notebooks" / "analysis.ipynb"

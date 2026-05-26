@@ -820,3 +820,9 @@ Addressed reviewer comments on phase-contrast and fluorescence analysis:
 - `src/cell_analysis/pipeline.py` — FL-3 (passthrough)
 - `src/cell_analysis/__init__.py` — FL-4 (export)
 - `notebooks/analysis.ipynb` — all: imports, config, cells, TOC
+
+### Run provenance in HTML reports (2026-05-26)
+
+- [x] Notebook parameters cell now displays a rendered Markdown summary of all input file paths and configuration values as cell output, ensuring the HTML report always contains this provenance info regardless of code cell visibility
+- [x] Added `CONFIG_PATH` parameter (defaults to empty string) — when the papermill runner executes, it injects the resolved config YAML path so the HTML shows which config file was used
+- [x] Updated `scripts/run_experiment.py` to inject `CONFIG_PATH` into papermill parameters, added to `ALLOWED_KEYS` and `TYPE_RULES`
