@@ -1,0 +1,2 @@
+auc,accuracy,n_cells,n_died,n_survived,feature_importance_area,feature_importance_cv,feature_importance_nnrm
+0.6716083916083916,0.65,360,165,195,-0.30852612807780033,-0.11135899100041455,0.6789325941424093
