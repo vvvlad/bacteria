@@ -110,7 +110,8 @@ def run_single_config(config_path):
         failed = True
         shutil.copy(tmp_path, results_dir / "report_failed.ipynb")
 
-    exporter = HTMLExporter()
+    exporter = HTMLExporter(exclude_input=True, exclude_input_prompt=True,
+                            exclude_output_prompt=True)
     nb = nbformat.read(str(tmp_path), as_version=4)
     body, _ = exporter.from_notebook_node(nb)
     (results_dir / "report.html").write_text(body, encoding="utf-8")
