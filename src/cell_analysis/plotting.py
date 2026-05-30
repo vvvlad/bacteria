@@ -12,6 +12,63 @@ import seaborn as sns
 
 
 # ---------------------------------------------------------------------------
+# Source CSV registry
+# ---------------------------------------------------------------------------
+
+PLOT_SOURCES: dict[str, list[str]] = {
+    "plot_frame_gating": ["frame_diagnostics.csv", "dropped_frames.csv"],
+    "plot_cells_per_frame": ["tracked_cells.csv"],
+    "plot_lifetime_distribution": ["track_statistics.csv"],
+    "plot_area_distribution": ["tracked_cells.csv"],
+    "plot_swelling_dynamics": ["tracked_cells.csv"],
+    "plot_swelling_vs_survival": ["tracked_cells.csv"],
+    "plot_fluorescence_per_frame": ["tracked_cells.csv"],
+    "plot_relative_fluorescence": ["tracked_cells.csv"],
+    "plot_fluorescence_vs_volume": ["tracked_cells.csv"],
+    "plot_metric_dynamics": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_fluorescence_disappearance": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_growth_before_burst": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_growth_phases": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_fluorescence_concentration": ["tracked_cells.csv"],
+    "plot_migration_speed": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_sav_ratio": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_death_clustering": [
+        "tracked_cells.csv", "track_statistics.csv", "clustering_summary.csv",
+    ],
+    "plot_preburst_fluorescence": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_fate_prediction": ["fate_predictions.csv", "fate_prediction_summary.csv"],
+    "plot_spatial_gradient": ["spatial_gradient.csv", "spatial_gradient_summary.csv"],
+    "plot_nucleus_persistence": [
+        "nucleus_persistence.csv", "nucleus_persistence_summary.csv",
+    ],
+    "plot_initial_features_vs_lifespan": ["tracked_cells.csv", "track_statistics.csv"],
+}
+
+
+def show_with_source(plot_func, *args, **kwargs):
+    """Render *plot_func* and a markdown line linking to its source CSVs.
+
+    Looks up ``PLOT_SOURCES[plot_func.__name__]`` and renders one link per
+    source CSV below the figure. Plots not in the registry render no link
+    (raw-image previews, etc.). Links are relative filenames, so they
+    resolve when the exported HTML report sits next to the CSVs in the
+    results directory.
+    """
+    from IPython.display import display, Markdown
+
+    plot_func(*args, **kwargs)
+    plt.show()
+
+    sources = PLOT_SOURCES.get(plot_func.__name__)
+    if not sources:
+        return
+
+    links = ", ".join(f"[`{name}`]({name})" for name in sources)
+    label = "Source" if len(sources) == 1 else "Sources"
+    display(Markdown(f"_{label}: {links}_"))
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -23,12 +80,20 @@ def _frame0_track_ids(tracked):
     return tracked.loc[tracked["frame"] == 0, "track_id"].unique()
 
 
-def _survival_split(tracked):
-    frame0_tracks = _frame0_track_ids(tracked)
+def _survival_split(tracked, cohort="all"):
+    """Split tracks by fate (present at the last frame vs not).
+
+    cohort="all" (default) splits every track; cohort="frame0" restricts
+    to tracks present at frame 0 (use this only when the metric needs a
+    frame-0 baseline, e.g. F(t)/F(0)).
+    """
     last_frame = tracked["frame"].max()
+    if cohort == "frame0":
+        scope = tracked[tracked["track_id"].isin(_frame0_track_ids(tracked))]
+    else:
+        scope = tracked
     per_track = (
-        tracked[tracked["track_id"].isin(frame0_tracks)]
-        .groupby("track_id")
+        scope.groupby("track_id")
         .agg(last_frame=("frame", "max"))
         .reset_index()
     )
@@ -445,7 +510,7 @@ def plot_swelling_vs_survival(tracked):
     ax.axhline(1.0, color="gray", linestyle="--", alpha=0.5)
     ax.set(
         xlabel="Frame", ylabel="V(t) / V(0)",
-        title="Swelling dynamics: disappeared vs. survived",
+        title="Swelling dynamics: disappeared vs. survived\n(frame-0 cohort)",
     )
     ax.set_xticks(
         range(int(cohort["frame"].min()), int(cohort["frame"].max()) + 1)
@@ -552,7 +617,7 @@ def plot_relative_fluorescence(tracked):
     )
 
     f_stats = cohort.groupby("frame")["F_rel"].agg(["mean", "sem", "count"])
-    survived_ids, disappeared_ids = _survival_split(tracked)
+    survived_ids, disappeared_ids = _survival_split(tracked, cohort="frame0")
 
     rng = np.random.default_rng(42)
     subset_ids = rng.choice(
@@ -620,7 +685,7 @@ def plot_relative_fluorescence(tracked):
     ax.axhline(1.0, color="gray", linestyle="--", alpha=0.5)
     ax.set(
         xlabel="Frame", ylabel="F(t) / F(0)",
-        title="Fluorescence dynamics: disappeared vs. survived",
+        title="Fluorescence dynamics: disappeared vs. survived\n(frame-0 cohort)",
     )
     ax.set_xticks(
         range(int(cohort["frame"].min()), int(cohort["frame"].max()) + 1)
@@ -826,28 +891,33 @@ def plot_fluorescence_concentration(tracked):
     _outcome_split_panel(ax, tracked, "fluor_concentration", survived_ids, disappeared_ids)
     ax.set(
         xlabel="Frame", ylabel="F_total / Volume",
-        title="Concentration: disappeared vs. survived",
+        title="Concentration: disappeared vs. survived\n(all tracks)",
     )
 
     ax = axes[2]
-    sample = tracked.dropna(subset=["fluor_concentration", "volume"]).sample(
-        n=min(3000, len(tracked)), random_state=42,
-    )
+    full = tracked.dropna(subset=["fluor_concentration", "volume"])
+    sample = full.sample(n=min(3000, len(full)), random_state=42)
     ax.scatter(
         sample["volume"], sample["fluor_concentration"],
         alpha=0.15, s=10, color="purple", edgecolors="none",
     )
+    scope = (
+        f"scatter: all {len(full)} points"
+        if len(sample) == len(full)
+        else f"scatter: {len(sample)} of {len(full)} (random)"
+    )
     ax.set(
         xlabel="Volume (px^3)", ylabel="F_total / Volume",
-        title="Concentration vs. cell volume",
+        title=f"Concentration vs. cell volume\n{scope}",
     )
-    mask = np.isfinite(sample["volume"]) & np.isfinite(sample["fluor_concentration"])
+    mask = np.isfinite(full["volume"]) & np.isfinite(full["fluor_concentration"])
     if mask.sum() > 2:
         r = np.corrcoef(
-            sample.loc[mask, "volume"], sample.loc[mask, "fluor_concentration"],
+            full.loc[mask, "volume"], full.loc[mask, "fluor_concentration"],
         )[0, 1]
         ax.annotate(
-            f"r = {r:.3f}", xy=(0.05, 0.95), xycoords="axes fraction",
+            f"r = {r:.3f} (n={int(mask.sum())})",
+            xy=(0.05, 0.95), xycoords="axes fraction",
             fontsize=12, fontweight="bold", va="top",
         )
 
@@ -889,7 +959,7 @@ def plot_migration_speed(tracked, track_stats):
     _outcome_split_panel(ax, speed_data, "speed", survived_ids, disappeared_ids)
     ax.set(
         xlabel="Frame", ylabel="Speed (px/frame)",
-        title="Migration speed: disappeared vs. survived",
+        title="Migration speed: disappeared vs. survived\n(all tracks)",
     )
 
     ax = axes[2]
@@ -916,56 +986,85 @@ def plot_migration_speed(tracked, track_stats):
 
 
 def plot_sav_ratio(tracked, track_stats):
-    """3-panel: SA:V over time, outcome split, SA:V at death vs survival."""
-    fig, axes = plt.subplots(1, 3, figsize=(20, 5))
+    """3-panel: SA:V over time, outcome split, SA:V at death vs survival.
 
-    ax = axes[0]
+    Plotly version (interactive): hover for exact values, legend-click to
+    toggle traces, box-zoom, pan. Returns nothing; the figure is rendered
+    via ``fig.show()`` so callers (including ``show_with_source``) work
+    unchanged.
+    """
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+
+    fig = make_subplots(
+        rows=1, cols=3,
+        subplot_titles=(
+            "Surface-area-to-volume ratio over time",
+            "SA:V ratio: disappeared vs. survived (all tracks)",
+            "SA:V at disappearance vs. final frame (survived)",
+        ),
+        horizontal_spacing=0.08,
+    )
+
     per_frame = tracked.groupby("frame")["sav_ratio"].agg(["mean", "sem"])
-    ax.fill_between(
-        per_frame.index,
-        per_frame["mean"] - per_frame["sem"],
-        per_frame["mean"] + per_frame["sem"],
-        color="darkgreen", alpha=0.3,
+    _add_mean_sem_band(
+        fig, per_frame.index, per_frame["mean"], per_frame["sem"],
+        color="darkgreen", name="Mean +/- SEM", legendgroup="panel1",
+        row=1, col=1,
     )
-    ax.plot(
-        per_frame.index, per_frame["mean"], "o-", color="darkgreen",
-        linewidth=2, markersize=4, label="Mean +/- SEM",
-    )
-    ax.set(
-        xlabel="Frame", ylabel="SA / V (px^-1)",
-        title="Surface-area-to-volume ratio over time",
-    )
-    ax.set_xticks(per_frame.index)
-    ax.legend(fontsize=9)
 
-    ax = axes[1]
     survived_ids, disappeared_ids = _survival_split(tracked)
-    _outcome_split_panel(ax, tracked, "sav_ratio", survived_ids, disappeared_ids)
-    ax.set(
-        xlabel="Frame", ylabel="SA / V (px^-1)",
-        title="SA:V ratio: disappeared vs. survived",
-    )
+    for label, ids, color in [
+        ("Survived", survived_ids, "steelblue"),
+        ("Disappeared", disappeared_ids, "tomato"),
+    ]:
+        sub = tracked[tracked["track_id"].isin(ids)]
+        if sub.empty:
+            continue
+        g = sub.groupby("frame")["sav_ratio"].agg(["mean", "sem"])
+        _add_mean_sem_band(
+            fig, g.index, g["mean"], g["sem"],
+            color=color, name=f"{label} (n={len(ids)})",
+            legendgroup="panel2", row=1, col=2,
+        )
 
-    ax = axes[2]
     last_obs = tracked.sort_values("frame").groupby("track_id").last().reset_index()
     last_obs = last_obs.merge(
         track_stats[["track_id", "disappeared"]], on="track_id",
     )
     dis_final = last_obs.loc[last_obs["disappeared"], "sav_ratio"].dropna()
     surv_final = last_obs.loc[~last_obs["disappeared"], "sav_ratio"].dropna()
-    if len(dis_final) > 0:
-        sns.histplot(dis_final, ax=ax, color="tomato", label="Disappeared (final frame)",
-                     alpha=0.6, edgecolor="white", bins=25, stat="density")
-    if len(surv_final) > 0:
-        sns.histplot(surv_final, ax=ax, color="steelblue", label="Survived (final frame)",
-                     alpha=0.6, edgecolor="white", bins=25, stat="density")
-    ax.set(
-        xlabel="SA:V at last observation", ylabel="Density",
-        title="SA:V at disappearance vs. final frame (survived)",
-    )
-    ax.legend(fontsize=9)
+    for vals, label, color in [
+        (dis_final, "Disappeared (final frame)", "tomato"),
+        (surv_final, "Survived (final frame)", "steelblue"),
+    ]:
+        if len(vals) == 0:
+            continue
+        fig.add_trace(
+            go.Histogram(
+                x=vals, nbinsx=25, histnorm="probability density",
+                marker_color=color, opacity=0.6, name=label,
+                legendgroup="panel3",
+                hovertemplate="SA:V %{x:.3f}<br>Density %{y:.2f}<extra></extra>",
+            ),
+            row=1, col=3,
+        )
 
-    plt.tight_layout()
+    frame_ticks = list(range(int(tracked["frame"].min()),
+                             int(tracked["frame"].max()) + 1))
+    for col in (1, 2):
+        fig.update_xaxes(title_text="Frame", tickmode="array",
+                         tickvals=frame_ticks, row=1, col=col)
+        fig.update_yaxes(title_text="SA / V (px^-1)", row=1, col=col)
+    fig.update_xaxes(title_text="SA:V at last observation", row=1, col=3)
+    fig.update_yaxes(title_text="Density", row=1, col=3)
+    fig.update_layout(
+        height=500, barmode="overlay",
+        legend=dict(groupclick="toggleitem"),
+        margin=dict(t=60, b=50, l=60, r=30),
+    )
+
+    fig.show()
 
     print(f"SA:V at frame 0: {per_frame['mean'].iloc[0]:.4f}")
     print(f"SA:V at frame {int(per_frame.index[-1])}: "
@@ -974,6 +1073,42 @@ def plot_sav_ratio(tracked, track_stats):
         print(f"Median SA:V at death: {dis_final.median():.4f}")
     if len(surv_final) > 0:
         print(f"Median SA:V at end (survived): {surv_final.median():.4f}")
+
+
+def _add_mean_sem_band(fig, x, mean, sem, color, name, legendgroup, row, col):
+    """Plotly equivalent of fill_between + line+markers for a mean+/-SEM band."""
+    import plotly.graph_objects as go
+
+    x = list(x)
+    upper = (mean + sem).tolist()
+    lower = (mean - sem).tolist()
+    fillcolor = _rgba(color, 0.25)
+    fig.add_trace(
+        go.Scatter(
+            x=x + x[::-1], y=upper + lower[::-1],
+            fill="toself", fillcolor=fillcolor,
+            line=dict(color="rgba(0,0,0,0)"),
+            hoverinfo="skip", showlegend=False,
+            legendgroup=legendgroup,
+        ),
+        row=row, col=col,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=mean.tolist(), mode="lines+markers",
+            line=dict(color=color, width=2), marker=dict(size=5),
+            name=name, legendgroup=legendgroup,
+            hovertemplate="Frame %{x}<br>SA:V %{y:.4f}<extra>" + name + "</extra>",
+        ),
+        row=row, col=col,
+    )
+
+
+def _rgba(color, alpha):
+    """Convert a matplotlib named colour to an 'rgba(r,g,b,a)' string for Plotly."""
+    import matplotlib.colors as mcolors
+    r, g, b = mcolors.to_rgb(color)
+    return f"rgba({int(r*255)},{int(g*255)},{int(b*255)},{alpha})"
 
 
 def plot_death_clustering(tracked, track_stats, clustering_result):
@@ -1287,9 +1422,8 @@ def plot_spatial_gradient(gradient_df, summary):
 
 def plot_fluorescence_vs_volume(tracked):
     """Scatter total and mean fluorescence vs cell volume."""
-    sample = tracked.dropna(subset=["total_intensity", "volume"]).sample(
-        n=min(3000, len(tracked)), random_state=42,
-    )
+    full = tracked.dropna(subset=["total_intensity", "volume"])
+    sample = full.sample(n=min(3000, len(full)), random_state=42)
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
@@ -1303,15 +1437,22 @@ def plot_fluorescence_vs_volume(tracked):
             sample["volume"], sample[y_col],
             alpha=0.15, s=10, color="darkorange", edgecolors="none",
         )
-        ax.set(xlabel="Volume (px^3)", ylabel=y_label, title=title)
+        scope = (
+            f"scatter: all {len(full)} points"
+            if len(sample) == len(full)
+            else f"scatter: {len(sample)} of {len(full)} (random)"
+        )
+        ax.set(xlabel="Volume (px^3)", ylabel=y_label,
+               title=f"{title}\n{scope}")
 
-        mask = np.isfinite(sample["volume"]) & np.isfinite(sample[y_col])
+        mask = np.isfinite(full["volume"]) & np.isfinite(full[y_col])
         if mask.sum() > 2:
             r = np.corrcoef(
-                sample.loc[mask, "volume"], sample.loc[mask, y_col],
+                full.loc[mask, "volume"], full.loc[mask, y_col],
             )[0, 1]
             ax.annotate(
-                f"r = {r:.3f}", xy=(0.05, 0.95), xycoords="axes fraction",
+                f"r = {r:.3f} (n={int(mask.sum())})",
+                xy=(0.05, 0.95), xycoords="axes fraction",
                 fontsize=12, fontweight="bold", va="top",
             )
 
@@ -1385,16 +1526,16 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
         )
     ax.set(
         xlabel="Relative lifespan (0=start, 1=end)", ylabel=label,
-        title=f"{label} over normalized lifespan",
+        title=f"{label} over normalized lifespan\n(all tracks)",
     )
     ax.legend(fontsize=9)
 
-    # Right: outcome split (frame-0 cohort)
+    # Right: outcome split (all tracks)
     ax = axes[2]
     _outcome_split_panel(ax, tracked, metric, survived_ids, disappeared_ids)
     ax.set(
         xlabel="Frame", ylabel=label,
-        title=f"{label} dynamics: disappeared vs. survived",
+        title=f"{label} dynamics: disappeared vs. survived\n(all tracks)",
     )
 
     plt.tight_layout()

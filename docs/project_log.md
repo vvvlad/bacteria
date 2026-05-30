@@ -826,3 +826,22 @@ Addressed reviewer comments on phase-contrast and fluorescence analysis:
 - [x] Notebook parameters cell now displays a rendered Markdown summary of all input file paths and configuration values as cell output, ensuring the HTML report always contains this provenance info regardless of code cell visibility
 - [x] Added `CONFIG_PATH` parameter (defaults to empty string) — when the papermill runner executes, it injects the resolved config YAML path so the HTML shows which config file was used
 - [x] Updated `scripts/run_experiment.py` to inject `CONFIG_PATH` into papermill parameters, added to `ALLOWED_KEYS` and `TYPE_RULES`
+
+### Per-plot source CSV attribution (2026-05-30)
+
+Made the notebook and HTML reports clearer by showing which CSV backs every plot.
+
+- [x] `src/cell_analysis/plotting.py` — added `PLOT_SOURCES` registry (plot function name → list of CSV filenames) and `show_with_source(plot_func, *args, **kwargs)` helper that calls the plot then renders a markdown line linking to each source CSV (`_Source: [tracked_cells.csv](tracked_cells.csv)_`). Multi-source plots get `_Sources: ..., ...`. Plots not in the registry (raw-image previews) render no line. Links use bare filenames so they resolve from the HTML report co-located with the CSVs in the results dir.
+- [x] `src/cell_analysis/pipeline.py` — added `save_dataframe`, `save_summary_dict`, and `save_main_outputs` thin helpers around `io.save_results` / `io.save_summary`. `save_main_outputs(tracked, track_stats, results_dir)` saves both cumulative DataFrames in one call.
+- [x] `notebooks/analysis.ipynb` — every plot cell now uses `show_with_source(plot_X, ...)` instead of calling the plot directly. CSV saves moved out of the end-of-notebook bulk export and into the cell that produces each dataframe: `save_main_outputs` after each `add_*` step that mutates tracked/track_stats; `save_dataframe`/`save_summary_dict` for one-shot outputs (`fate_predictions.csv`, `spatial_gradient.csv`, `nucleus_persistence.csv`, `clustering_summary.csv`, etc.) right when computed. End-of-notebook section now globs `results/<RUN_NAME>/*.csv` and prints the on-disk file list instead of calling `export_all_results`.
+- [x] `src/cell_analysis/__init__.py` — exports `PLOT_SOURCES`, `show_with_source`, `save_dataframe`, `save_summary_dict`, `save_main_outputs`.
+
+### Plot data-scope fixes (2026-05-30)
+
+Reviewer flagged that several plots silently hid or subsampled data. Fixed the substantive cases and labelled the rest so the scope is visible on the figure.
+
+- [x] **Pearson r on full data, not subsample.** `plot_fluorescence_vs_volume` (§8.3) and `plot_fluorescence_concentration` right panel (§8.9) used to compute `r` on the 3000-point random scatter subsample. The 3000-point subsample is now kept only for rendering (overplotting workaround); `r` is computed on the full filtered dataset and annotated as `r = X.XXX (n=...)`. Titles now show `scatter: 3000 of N (random)` so the subsampling is visible.
+- [x] **`_survival_split` decoupled from frame-0 cohort.** Was silently restricting survival splits to tracks present at frame 0. Now takes `cohort="all"` (default) or `cohort="frame0"`. `plot_relative_fluorescence` (§8.2) passes `"frame0"` because F(t)/F(0) needs a frame-0 baseline; all other split panels (`plot_metric_dynamics` for CV §8.4 and nNRM §8.5, `plot_migration_speed` §8.10, `plot_sav_ratio` §8.11, `plot_fluorescence_concentration` middle §8.9) now correctly include tracks that joined after frame 0.
+- [x] **Scope annotated in titles.** Every survival-split panel now appends `(frame-0 cohort)` or `(all tracks)` to its title so the audience can see which population is plotted.
+- [x] **Notebook TOC §6.3 fixed.** Said "Area histograms at first and last frame" but `plot_area_distribution` pools across all frames; updated to "Area histogram pooled across all frames".
+- [ ] **Not changed (already labelled or intentional):** the 20-trace background curves in `plot_swelling_dynamics` and `plot_relative_fluorescence` and the 8 example tracks in `plot_growth_phases` — these are cosmetic; the headline mean ± SEM uses the full cohort, and the count is already in the legend/title.

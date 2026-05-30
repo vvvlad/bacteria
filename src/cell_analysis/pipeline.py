@@ -8,6 +8,30 @@ import numpy as np
 from pathlib import Path
 
 
+def save_dataframe(df, results_dir, filename):
+    """Save *df* as CSV at ``results_dir/filename``."""
+    from .io import save_results
+
+    save_results(df, Path(results_dir) / filename)
+
+
+def save_summary_dict(data, results_dir, filename):
+    """Save flattened *data* dict as single-row CSV at ``results_dir/filename``."""
+    from .io import save_summary
+
+    save_summary(data, Path(results_dir) / filename)
+
+
+def save_main_outputs(tracked, track_stats, results_dir):
+    """Save the cumulative *tracked* and *track_stats* DataFrames.
+
+    Called repeatedly through the notebook to keep the on-disk CSVs in
+    sync with in-memory columns added by each ``add_*`` step.
+    """
+    save_dataframe(tracked, results_dir, "tracked_cells.csv")
+    save_dataframe(track_stats, results_dir, "track_statistics.csv")
+
+
 def load_experiment(phase_path, fluor_path):
     """Load paired phase-contrast and fluorescence stacks.
 
@@ -331,7 +355,7 @@ def add_fate_prediction(tracked, track_stats, features=None):
     print(f"  AUC: {summary['auc']:.3f}")
     print(f"  Accuracy: {summary['accuracy']:.1%}")
     print(f"  Died: {summary['n_died']}, Survived: {summary['n_survived']}")
-    print(f"  Feature importance (z-scored coefficients):")
+    print("  Feature importance (z-scored coefficients):")
     for feat, coef in summary["feature_importance"].items():
         direction = "↑ death" if coef > 0 else "↓ death"
         print(f"    {feat}: {coef:+.3f} ({direction})")

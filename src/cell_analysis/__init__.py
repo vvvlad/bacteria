@@ -17,6 +17,9 @@ from .pipeline import (
     run_nucleus_persistence as run_nucleus_persistence,
     export_all_results as export_all_results,
     run_tracking as run_tracking,
+    save_dataframe as save_dataframe,
+    save_summary_dict as save_summary_dict,
+    save_main_outputs as save_main_outputs,
 )
 from .segmentation import (
     detect_cells_frame as detect_cells_frame,
@@ -25,6 +28,8 @@ from .segmentation import (
 )
 from .io import save_results as save_results, save_summary as save_summary
 from .plotting import (
+    PLOT_SOURCES as PLOT_SOURCES,
+    show_with_source as show_with_source,
     plot_area_distribution as plot_area_distribution,
     plot_cells_per_frame as plot_cells_per_frame,
     plot_channels_preview as plot_channels_preview,

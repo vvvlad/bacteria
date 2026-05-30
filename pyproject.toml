@@ -13,6 +13,7 @@ dependencies = [
     "pandas",
     "matplotlib",
     "seaborn",
+    "plotly>=5.20",
     "tifffile",
     "trackpy",
     "btrack",
