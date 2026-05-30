@@ -861,3 +861,9 @@ Section 8.14's markdown cited Mann-Whitney p-values (area p=0.0008, CV p<0.0001,
 `notebooks/analysis.ipynb` pointed at `data/gradient_0011/phase.tif` / `fluorescence.tif`, which don't exist — the actual files are `Gradient-0011.zvi  Ch0.tif` / `Ch1-BG.tif` (as `configs/run_01.yaml` already uses). Notebook raised `FileNotFoundError` on the first load cell.
 
 - [x] `notebooks/analysis.ipynb` — updated `STACK_PATH` and `FLUOR_PATH` in the Configuration cell to the actual filenames. Verified `load_experiment()` succeeds: `(25, 1040, 1388)` uint16 for both stacks.
+
+### Force CPU on Intel Macs to avoid MPS bfloat16 crash (2026-05-30)
+
+Cellpose 4.x's SAM backbone runs ops in bfloat16. On 2019 Intel MacBook Pros with a discrete AMD GPU, MPS is detected as available but lacks bfloat16 support, so `CellposeModel(gpu=True)` aborts with `RuntimeError: BFloat16 is not supported on MPS`. CPU works fine; Apple-Silicon MPS supports bfloat16 in `torch>=2.5` and stays on the GPU path.
+
+- [x] `src/cell_analysis/segmentation.py` — added `_resolve_gpu(gpu)` helper that returns `False` on Darwin x86_64 (with a `warnings.warn`), otherwise passes the requested value through. Routed the three `CellposeModel(gpu=...)` constructors in `detect_cells_frame`, `detect_cells_stack`, and `detect_nuclei_stack` through it.

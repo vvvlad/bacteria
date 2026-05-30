@@ -11,6 +11,7 @@ benchmarks, and known limitations.
 """
 
 import logging
+import platform
 import warnings
 
 import numpy as np
@@ -20,6 +21,23 @@ from skimage import measure
 logging.getLogger("cellpose.models").setLevel(logging.ERROR)
 logging.getLogger("cellpose.dynamics").setLevel(logging.ERROR)
 warnings.filterwarnings("ignore", message="Sparse invariant checks")
+
+
+def _resolve_gpu(gpu: bool) -> bool:
+    """Force CPU on Intel Macs.
+
+    Cellpose 4.x (SAM backbone) uses bfloat16, which is unsupported on the
+    Intel-Mac MPS backend (AMD GPU exposed as MPS) and raises
+    "BFloat16 is not supported on MPS". Apple Silicon MPS supports bfloat16
+    in torch>=2.5, so we only opt out on Darwin x86_64.
+    """
+    if gpu and platform.system() == "Darwin" and platform.machine() == "x86_64":
+        warnings.warn(
+            "Forcing gpu=False: Intel Mac MPS lacks bfloat16 needed by Cellpose 4.x",
+            stacklevel=2,
+        )
+        return False
+    return gpu
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +93,7 @@ def detect_cells_frame(
     from cellpose.models import CellposeModel
 
     if _model is None:
-        _model = CellposeModel(gpu=gpu)
+        _model = CellposeModel(gpu=_resolve_gpu(gpu))
 
     # Invert: dark cells become bright for Cellpose
     inverted = frame.max() - frame
@@ -149,7 +167,7 @@ def detect_cells_stack(
     """
     from cellpose.models import CellposeModel
 
-    model = CellposeModel(gpu=gpu)
+    model = CellposeModel(gpu=_resolve_gpu(gpu))
 
     centroids_per_frame = []
     label_stack = np.zeros_like(stack, dtype=np.int32)
@@ -202,7 +220,7 @@ def detect_nuclei_stack(
     """
     from cellpose.models import CellposeModel
 
-    model = CellposeModel(gpu=gpu)
+    model = CellposeModel(gpu=_resolve_gpu(gpu))
     T, H, W = fluor_stack.shape
     label_stack = np.zeros((T, H, W), dtype=np.int32)
 
