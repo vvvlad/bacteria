@@ -7,18 +7,16 @@ summary statistics so the notebook stays minimal.
 import numpy as np
 from pathlib import Path
 
+from .io import save_results, save_summary
+
 
 def save_dataframe(df, results_dir, filename):
     """Save *df* as CSV at ``results_dir/filename``."""
-    from .io import save_results
-
     save_results(df, Path(results_dir) / filename)
 
 
 def save_summary_dict(data, results_dir, filename):
     """Save flattened *data* dict as single-row CSV at ``results_dir/filename``."""
-    from .io import save_summary
-
     save_summary(data, Path(results_dir) / filename)
 
 

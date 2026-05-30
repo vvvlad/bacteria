@@ -8,6 +8,7 @@ analysis notebook.
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 import seaborn as sns
 
 
@@ -88,10 +89,11 @@ def _survival_split(tracked, cohort="all"):
     frame-0 baseline, e.g. F(t)/F(0)).
     """
     last_frame = tracked["frame"].max()
-    if cohort == "frame0":
-        scope = tracked[tracked["track_id"].isin(_frame0_track_ids(tracked))]
-    else:
-        scope = tracked
+    scope = (
+        tracked[tracked["track_id"].isin(_frame0_track_ids(tracked))]
+        if cohort == "frame0"
+        else tracked
+    )
     per_track = (
         scope.groupby("track_id")
         .agg(last_frame=("frame", "max"))
@@ -101,6 +103,13 @@ def _survival_split(tracked, cohort="all"):
     survived = per_track.loc[per_track["survived"], "track_id"]
     disappeared = per_track.loc[~per_track["survived"], "track_id"]
     return survived, disappeared
+
+
+def _scatter_scope(sample, full):
+    """Annotation describing how many points the scatter shows vs the full set."""
+    if len(sample) == len(full):
+        return f"scatter: all {len(full)} points"
+    return f"scatter: {len(sample)} of {len(full)} (random)"
 
 
 def _outcome_split_panel(ax, tracked, metric, survived_ids, disappeared_ids):
@@ -124,6 +133,44 @@ def _outcome_split_panel(ax, tracked, metric, survived_ids, disappeared_ids):
         range(int(tracked["frame"].min()), int(tracked["frame"].max()) + 1)
     )
     ax.legend(fontsize=9)
+
+
+def _rgba(color, alpha):
+    """Convert a matplotlib named colour to an 'rgba(r,g,b,a)' string for Plotly."""
+    r, g, b, _ = mcolors.to_rgba(color)
+    return f"rgba({int(r*255)},{int(g*255)},{int(b*255)},{alpha})"
+
+
+def _add_mean_sem_band(
+    fig, x, mean, sem, color, name, legendgroup, row, col, y_label="value",
+):
+    """Plotly equivalent of fill_between + line+markers for a mean+/-SEM band."""
+    import plotly.graph_objects as go
+
+    x = list(x)
+    upper = (mean + sem).tolist()
+    lower = (mean - sem).tolist()
+    fig.add_trace(
+        go.Scatter(
+            x=x + x[::-1], y=upper + lower[::-1],
+            fill="toself", fillcolor=_rgba(color, 0.25),
+            line=dict(color="rgba(0,0,0,0)"),
+            hoverinfo="skip", showlegend=False,
+            legendgroup=legendgroup,
+        ),
+        row=row, col=col,
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=x, y=mean.tolist(), mode="lines+markers",
+            line=dict(color=color, width=2), marker=dict(size=5),
+            name=name, legendgroup=legendgroup,
+            hovertemplate=(
+                f"Frame %{{x}}<br>{y_label} %{{y:.4f}}<extra>{name}</extra>"
+            ),
+        ),
+        row=row, col=col,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -901,22 +948,14 @@ def plot_fluorescence_concentration(tracked):
         sample["volume"], sample["fluor_concentration"],
         alpha=0.15, s=10, color="purple", edgecolors="none",
     )
-    scope = (
-        f"scatter: all {len(full)} points"
-        if len(sample) == len(full)
-        else f"scatter: {len(sample)} of {len(full)} (random)"
-    )
     ax.set(
         xlabel="Volume (px^3)", ylabel="F_total / Volume",
-        title=f"Concentration vs. cell volume\n{scope}",
+        title=f"Concentration vs. cell volume\n{_scatter_scope(sample, full)}",
     )
-    mask = np.isfinite(full["volume"]) & np.isfinite(full["fluor_concentration"])
-    if mask.sum() > 2:
-        r = np.corrcoef(
-            full.loc[mask, "volume"], full.loc[mask, "fluor_concentration"],
-        )[0, 1]
+    if len(full) > 2:
+        r = np.corrcoef(full["volume"], full["fluor_concentration"])[0, 1]
         ax.annotate(
-            f"r = {r:.3f} (n={int(mask.sum())})",
+            f"r = {r:.3f} (n={len(full)})",
             xy=(0.05, 0.95), xycoords="axes fraction",
             fontsize=12, fontweight="bold", va="top",
         )
@@ -1010,7 +1049,7 @@ def plot_sav_ratio(tracked, track_stats):
     _add_mean_sem_band(
         fig, per_frame.index, per_frame["mean"], per_frame["sem"],
         color="darkgreen", name="Mean +/- SEM", legendgroup="panel1",
-        row=1, col=1,
+        row=1, col=1, y_label="SA:V",
     )
 
     survived_ids, disappeared_ids = _survival_split(tracked)
@@ -1025,7 +1064,7 @@ def plot_sav_ratio(tracked, track_stats):
         _add_mean_sem_band(
             fig, g.index, g["mean"], g["sem"],
             color=color, name=f"{label} (n={len(ids)})",
-            legendgroup="panel2", row=1, col=2,
+            legendgroup="panel2", row=1, col=2, y_label="SA:V",
         )
 
     last_obs = tracked.sort_values("frame").groupby("track_id").last().reset_index()
@@ -1073,42 +1112,6 @@ def plot_sav_ratio(tracked, track_stats):
         print(f"Median SA:V at death: {dis_final.median():.4f}")
     if len(surv_final) > 0:
         print(f"Median SA:V at end (survived): {surv_final.median():.4f}")
-
-
-def _add_mean_sem_band(fig, x, mean, sem, color, name, legendgroup, row, col):
-    """Plotly equivalent of fill_between + line+markers for a mean+/-SEM band."""
-    import plotly.graph_objects as go
-
-    x = list(x)
-    upper = (mean + sem).tolist()
-    lower = (mean - sem).tolist()
-    fillcolor = _rgba(color, 0.25)
-    fig.add_trace(
-        go.Scatter(
-            x=x + x[::-1], y=upper + lower[::-1],
-            fill="toself", fillcolor=fillcolor,
-            line=dict(color="rgba(0,0,0,0)"),
-            hoverinfo="skip", showlegend=False,
-            legendgroup=legendgroup,
-        ),
-        row=row, col=col,
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=x, y=mean.tolist(), mode="lines+markers",
-            line=dict(color=color, width=2), marker=dict(size=5),
-            name=name, legendgroup=legendgroup,
-            hovertemplate="Frame %{x}<br>SA:V %{y:.4f}<extra>" + name + "</extra>",
-        ),
-        row=row, col=col,
-    )
-
-
-def _rgba(color, alpha):
-    """Convert a matplotlib named colour to an 'rgba(r,g,b,a)' string for Plotly."""
-    import matplotlib.colors as mcolors
-    r, g, b = mcolors.to_rgb(color)
-    return f"rgba({int(r*255)},{int(g*255)},{int(b*255)},{alpha})"
 
 
 def plot_death_clustering(tracked, track_stats, clustering_result):
@@ -1437,21 +1440,13 @@ def plot_fluorescence_vs_volume(tracked):
             sample["volume"], sample[y_col],
             alpha=0.15, s=10, color="darkorange", edgecolors="none",
         )
-        scope = (
-            f"scatter: all {len(full)} points"
-            if len(sample) == len(full)
-            else f"scatter: {len(sample)} of {len(full)} (random)"
-        )
         ax.set(xlabel="Volume (px^3)", ylabel=y_label,
-               title=f"{title}\n{scope}")
+               title=f"{title}\n{_scatter_scope(sample, full)}")
 
-        mask = np.isfinite(full["volume"]) & np.isfinite(full[y_col])
-        if mask.sum() > 2:
-            r = np.corrcoef(
-                full.loc[mask, "volume"], full.loc[mask, y_col],
-            )[0, 1]
+        if len(full) > 2:
+            r = np.corrcoef(full["volume"], full[y_col])[0, 1]
             ax.annotate(
-                f"r = {r:.3f} (n={int(mask.sum())})",
+                f"r = {r:.3f} (n={len(full)})",
                 xy=(0.05, 0.95), xycoords="axes fraction",
                 fontsize=12, fontweight="bold", va="top",
             )
