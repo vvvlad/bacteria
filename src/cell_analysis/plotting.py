@@ -9,7 +9,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
-import seaborn as sns
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 # ---------------------------------------------------------------------------
@@ -112,27 +113,7 @@ def _scatter_scope(sample, full):
     return f"scatter: {len(sample)} of {len(full)} (random)"
 
 
-def _outcome_split_panel(ax, tracked, metric, survived_ids, disappeared_ids):
-    for label, ids, color in [
-        ("Survived", survived_ids, "steelblue"),
-        ("Disappeared", disappeared_ids, "tomato"),
-    ]:
-        sub = tracked[tracked["track_id"].isin(ids)]
-        if sub.empty:
-            continue
-        g = sub.groupby("frame")[metric].agg(["mean", "sem"])
-        ax.fill_between(
-            g.index, g["mean"] - g["sem"], g["mean"] + g["sem"],
-            color=color, alpha=0.2,
-        )
-        ax.plot(
-            g.index, g["mean"], "o-", color=color,
-            linewidth=2, markersize=4, label=f"{label} (n={len(ids)})",
-        )
-    ax.set_xticks(
-        range(int(tracked["frame"].min()), int(tracked["frame"].max()) + 1)
-    )
-    ax.legend(fontsize=9)
+_DEFAULT_MARGIN = dict(t=80, b=50, l=60, r=30)
 
 
 def _rgba(color, alpha):
@@ -141,12 +122,23 @@ def _rgba(color, alpha):
     return f"rgba({int(r*255)},{int(g*255)},{int(b*255)},{alpha})"
 
 
+def _frame_xaxis(fig, frames, row=None, col=None, title="Frame"):
+    """Apply a 1-per-frame integer-tick policy to a subplot's x-axis."""
+    if hasattr(frames, "min") and hasattr(frames, "max"):
+        tickvals = list(range(int(frames.min()), int(frames.max()) + 1))
+    else:
+        tickvals = list(frames)
+    if row is None:
+        fig.update_xaxes(title_text=title, tickmode="array", tickvals=tickvals)
+    else:
+        fig.update_xaxes(title_text=title, tickmode="array", tickvals=tickvals,
+                         row=row, col=col)
+
+
 def _add_mean_sem_band(
     fig, x, mean, sem, color, name, legendgroup, row, col, y_label="value",
 ):
     """Plotly equivalent of fill_between + line+markers for a mean+/-SEM band."""
-    import plotly.graph_objects as go
-
     x = list(x)
     upper = (mean + sem).tolist()
     lower = (mean - sem).tolist()
@@ -173,12 +165,15 @@ def _add_mean_sem_band(
     )
 
 
-def _finalize_plotly(fig, *, log_menu=True, bin_menu_traces=None, height=None):
+def _finalize_plotly(
+    fig, *, log_menu=True, bin_menu_traces=None, height=None, margin=None,
+):
     """Add per-figure updateMenus and render the figure with editable text.
 
     log_menu adds a Linear/Log y-axis button group (top-right above the figure)
     that switches ALL y-axes in the figure at once. bin_menu_traces is a list
     of trace indices that should get a 10/25/50/100 bins dropdown (top-left).
+    margin defaults to a shared house style; pass a dict to override.
     The figure is rendered via fig.show() with config={"editable": True} so
     titles, axis labels, legend names, and annotation text are click-to-edit.
     """
@@ -207,7 +202,7 @@ def _finalize_plotly(fig, *, log_menu=True, bin_menu_traces=None, height=None):
                 for n in (10, 25, 50, 100)
             ],
         ))
-    update = dict(updatemenus=menus)
+    update = dict(updatemenus=menus, margin=margin or _DEFAULT_MARGIN)
     if height is not None:
         update["height"] = height
     fig.update_layout(**update)
@@ -268,7 +263,6 @@ def plot_detections(frame, centroids, zoom=None):
 
 def plot_frame_gating(diagnostics, bad_frames):
     """Show per-frame detection counts with flagged frames highlighted."""
-    import plotly.graph_objects as go
     from IPython.display import display, Markdown
 
     if bad_frames:
@@ -301,14 +295,12 @@ def plot_frame_gating(diagnostics, bad_frames):
         xaxis=dict(title="Frame", tickmode="array",
                    tickvals=list(diagnostics["frame"])),
         yaxis=dict(title="Cell count"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, height=400)
 
 
 def plot_cells_per_frame(tracked):
     """Plot tracked cell count over time with 50% disappearance marker."""
-    import plotly.graph_objects as go
 
     cells_per_frame = tracked.groupby("frame")["track_id"].nunique()
     initial_count = cells_per_frame.iloc[0]
@@ -352,7 +344,6 @@ def plot_cells_per_frame(tracked):
         xaxis=dict(title="Frame", tickmode="array",
                    tickvals=list(cells_per_frame.index)),
         yaxis=dict(title="Cell count"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, height=500)
 
@@ -367,8 +358,6 @@ def plot_cells_per_frame(tracked):
 
 def plot_lifetime_distribution(track_stats):
     """Show track lifetime histogram and disappearances per frame."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     last_frame = track_stats["last_frame"].max()
     disappeared = track_stats[track_stats["disappeared"]].sort_values("last_frame")
@@ -427,7 +416,7 @@ def plot_lifetime_distribution(track_stats):
     fig.update_xaxes(title_text="Frame", row=1, col=2, tickmode="array",
                      tickvals=list(range(0, last_frame + 1)))
     fig.update_yaxes(title_text="Cells disappeared", row=1, col=2)
-    fig.update_layout(showlegend=False, margin=dict(t=80, b=50, l=60, r=30))
+    fig.update_layout(showlegend=False)
 
     _finalize_plotly(fig, bin_menu_traces=[0], height=450)
 
@@ -437,7 +426,6 @@ def plot_lifetime_distribution(track_stats):
 
 def plot_area_distribution(tracked):
     """Show cell area histogram. Hover reveals equivalent spherical volume."""
-    import plotly.graph_objects as go
 
     areas = tracked["area"]
     median_area = areas.median()
@@ -459,7 +447,6 @@ def plot_area_distribution(tracked):
         xaxis=dict(title="Area (px\u00b2)"),
         yaxis=dict(title="Count"),
         showlegend=False,
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, bin_menu_traces=[0], height=450)
 
@@ -470,8 +457,6 @@ def plot_area_distribution(tracked):
 
 def plot_swelling_dynamics(tracked):
     """Plot V(t)/V(0) and S(t)/S(0) for the frame-0 cohort."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     frame0_tracks = _frame0_track_ids(tracked)
     cohort = tracked[tracked["track_id"].isin(frame0_tracks)].copy()
@@ -503,14 +488,14 @@ def plot_swelling_dynamics(tracked):
         horizontal_spacing=0.06,
     )
 
-    band_color = _rgba("steelblue", 0.25)
     track_color = _rgba("steelblue", 0.18)
-    for col, stats, sub_col, group in [
-        (1, v_stats, "V_rel", "panel1"),
-        (2, s_stats, "S_rel", "panel2"),
+    grouped_subset = subset.groupby("track_id")
+    for col, stats, sub_col, group, y_label in [
+        (1, v_stats, "V_rel", "panel1", "V(t)/V(0)"),
+        (2, s_stats, "S_rel", "panel2", "S(t)/S(0)"),
     ]:
         for tid in subset_ids:
-            t = subset[subset["track_id"] == tid]
+            t = grouped_subset.get_group(tid)
             fig.add_trace(go.Scatter(
                 x=t["frame"], y=t[sub_col], mode="lines",
                 line=dict(color=track_color, width=1),
@@ -518,32 +503,18 @@ def plot_swelling_dynamics(tracked):
                 legendgroup=group,
             ), row=1, col=col)
 
-        frames = list(stats.index)
-        upper = (stats["mean"] + stats["sem"]).tolist()
-        lower = (stats["mean"] - stats["sem"]).tolist()
-        fig.add_trace(go.Scatter(
-            x=frames + frames[::-1], y=upper + lower[::-1],
-            fill="toself", fillcolor=band_color,
-            line=dict(color="rgba(0,0,0,0)"),
-            hoverinfo="skip", showlegend=False,
-            legendgroup=group,
-        ), row=1, col=col)
-        fig.add_trace(go.Scatter(
-            x=frames, y=stats["mean"].tolist(),
-            mode="lines+markers",
-            line=dict(color="steelblue", width=2),
-            marker=dict(size=5),
-            name=f"Mean (n={len(frame0_tracks)})",
-            legendgroup=group,
-            hovertemplate="Frame %{x}<br>Ratio %{y:.3f}<extra></extra>",
-        ), row=1, col=col)
+        _add_mean_sem_band(
+            fig, stats.index, stats["mean"], stats["sem"],
+            color="steelblue", name=f"Mean (n={len(frame0_tracks)})",
+            legendgroup=group, row=1, col=col, y_label=y_label,
+        )
         fig.add_hline(
             y=1.0, line=dict(color="gray", dash="dash", width=1),
             opacity=0.5, row=1, col=col,
         )
 
         final_mean = stats["mean"].iloc[-1]
-        final_frame = int(frames[-1])
+        final_frame = int(stats.index[-1])
         xref = "x" if col == 1 else "x2"
         yref = "y" if col == 1 else "y2"
         fig.add_annotation(
@@ -555,17 +526,15 @@ def plot_swelling_dynamics(tracked):
             font=dict(color="red", size=12),
         )
 
-    fig.update_xaxes(title_text="Frame", row=1, col=1, tickmode="array",
-                     tickvals=list(v_stats.index))
-    fig.update_xaxes(title_text="Frame", row=1, col=2, tickmode="array",
-                     tickvals=list(s_stats.index))
+    _frame_xaxis(fig, v_stats.index, row=1, col=1)
+    _frame_xaxis(fig, s_stats.index, row=1, col=2)
     fig.update_yaxes(title_text="V(t) / V(0)", row=1, col=1)
     fig.update_yaxes(title_text="S(t) / S(0)", row=1, col=2)
     fig.update_layout(
         title="Cell swelling dynamics (frame-0 cohort, spherical assumption)",
-        showlegend=False, margin=dict(t=100, b=50, l=60, r=30),
+        showlegend=False,
     )
-    _finalize_plotly(fig, height=520)
+    _finalize_plotly(fig, height=520, margin=dict(t=100, b=50, l=60, r=30))
 
     print(
         f"\nFinal V(t)/V(0) at frame {int(v_stats.index[-1])}: "
@@ -581,8 +550,6 @@ def plot_swelling_dynamics(tracked):
 
 def plot_swelling_vs_survival(tracked):
     """Scatter of max swelling vs initial volume, and V(t)/V(0) by outcome."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
     from numpy.polynomial.polynomial import polyfit
 
     frame0_tracks = _frame0_track_ids(tracked)
@@ -673,7 +640,6 @@ def plot_swelling_vs_survival(tracked):
     fig.update_yaxes(title_text="V(t) / V(0)", row=1, col=2)
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, height=520)
 
@@ -725,7 +691,6 @@ def plot_channels_preview(phase_stack, fluor_stack, frame=0):
 
 def plot_fluorescence_per_frame(tracked):
     """Plot population mean fluorescence intensity over time."""
-    from plotly.subplots import make_subplots
 
     fluor_per_frame = tracked.groupby("frame")["mean_intensity"].agg(
         ["mean", "sem"],
@@ -743,7 +708,6 @@ def plot_fluorescence_per_frame(tracked):
     fig.update_yaxes(title_text="Mean fluorescence intensity")
     fig.update_layout(
         title="Population mean fluorescence per frame",
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, height=450)
 
@@ -757,8 +721,6 @@ def plot_fluorescence_per_frame(tracked):
 
 def plot_relative_fluorescence(tracked):
     """Plot F(t)/F(0) for the frame-0 cohort, overall and by outcome."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     frame0_tracks = _frame0_track_ids(tracked)
     cohort = tracked[tracked["track_id"].isin(frame0_tracks)].copy()
@@ -846,7 +808,6 @@ def plot_relative_fluorescence(tracked):
     fig.update_yaxes(title_text="F(t) / F(0)", row=1, col=2)
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, height=520)
 
@@ -861,8 +822,6 @@ def plot_relative_fluorescence(tracked):
 
 def plot_growth_before_burst(tracked, track_stats):
     """Area growth curves aligned to burst frame for disappeared cells."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     has_burst = track_stats[
         track_stats["disappeared"] & track_stats["area_rel_max"].notna()
@@ -886,13 +845,13 @@ def plot_growth_before_burst(tracked, track_stats):
 
     aligned = []
     track_color = _rgba("tomato", 0.18)
+    grouped = tracked.groupby("track_id")
     for tid in burst_ids:
-        grp = tracked[tracked["track_id"] == tid].sort_values("frame")
+        grp = grouped.get_group(tid).sort_values("frame")
         a0 = grp["area"].iloc[0]
         if a0 == 0:
             continue
-        t_burst = burst_frame[tid]
-        rel_frame = grp["frame"] - t_burst
+        rel_frame = grp["frame"] - burst_frame[tid]
         rel_area = grp["area"] / a0
         aligned.append(pd.DataFrame({
             "track_id": tid, "rel_frame": rel_frame, "area_rel": rel_area,
@@ -967,7 +926,6 @@ def plot_growth_before_burst(tracked, track_stats):
     fig.update_layout(
         barmode="overlay",
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, bin_menu_traces=hist_indices, height=500)
 
@@ -982,8 +940,6 @@ def plot_growth_before_burst(tracked, track_stats):
 
 def plot_nucleus_persistence(comparison_df):
     """3-panel: counts over time, offset stability, and count correlation."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
     from scipy.stats import pearsonr
 
     r, p = pearsonr(comparison_df["phase_cells"], comparison_df["fluor_nuclei"])
@@ -1061,18 +1017,13 @@ def plot_nucleus_persistence(comparison_df):
     fig.update_xaxes(title_text="Phase-contrast cell count", row=1, col=3)
     fig.update_yaxes(title_text="Fluorescence nucleus count",
                      row=1, col=3)
-    fig.update_layout(
-        legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=80),
-    )
-    _finalize_plotly(fig, height=500)
+    fig.update_layout(legend=dict(groupclick="toggleitem"))
+    _finalize_plotly(fig, height=500, margin=dict(t=80, b=50, l=60, r=80))
     print(f"Phase vs fluor count: Pearson r = {r:.3f}, p = {p:.2e}")
 
 
 def plot_fluorescence_concentration(tracked):
     """3-panel: concentration over time, outcome split, concentration vs volume."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     fig = make_subplots(
         rows=1, cols=3,
@@ -1138,7 +1089,6 @@ def plot_fluorescence_concentration(tracked):
     fig.update_yaxes(title_text="F_total / Volume", row=1, col=3)
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, height=500)
 
@@ -1151,8 +1101,6 @@ def plot_fluorescence_concentration(tracked):
 
 def plot_migration_speed(tracked, track_stats):
     """3-panel: speed over time, outcome split, speed distribution."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     fig = make_subplots(
         rows=1, cols=3,
@@ -1218,7 +1166,6 @@ def plot_migration_speed(tracked, track_stats):
     fig.update_layout(
         barmode="overlay",
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, bin_menu_traces=hist_indices, height=500)
 
@@ -1236,8 +1183,6 @@ def plot_sav_ratio(tracked, track_stats):
     via ``fig.show()`` so callers (including ``show_with_source``) work
     unchanged.
     """
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     fig = make_subplots(
         rows=1, cols=3,
@@ -1306,7 +1251,6 @@ def plot_sav_ratio(tracked, track_stats):
     fig.update_layout(
         barmode="overlay",
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
 
     _finalize_plotly(fig, bin_menu_traces=hist_indices, height=500)
@@ -1322,8 +1266,6 @@ def plot_sav_ratio(tracked, track_stats):
 
 def plot_death_clustering(tracked, track_stats, clustering_result):
     """3-panel: spatial map of deaths, null distribution, temporal clustering."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     survived = track_stats[~track_stats["disappeared"]]
     died = track_stats[track_stats["disappeared"]]
@@ -1404,7 +1346,6 @@ def plot_death_clustering(tracked, track_stats, clustering_result):
     fig.update_yaxes(title_text="Deaths", row=1, col=3)
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(
         fig,
@@ -1415,8 +1356,6 @@ def plot_death_clustering(tracked, track_stats, clustering_result):
 
 def plot_preburst_fluorescence(tracked, track_stats, n_frames=5):
     """3-panel: aligned pre-burst curves, slope distribution, spike vs no-spike."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     disappeared = track_stats[track_stats["disappeared"]].copy()
     if disappeared.empty:
@@ -1525,7 +1464,6 @@ def plot_preburst_fluorescence(tracked, track_stats, n_frames=5):
     fig.update_yaxes(title_text="Count", row=1, col=3)
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(
         fig,
@@ -1540,8 +1478,6 @@ def plot_preburst_fluorescence(tracked, track_stats, n_frames=5):
 
 def plot_growth_phases(tracked, track_stats):
     """3-panel: changepoint distribution, slope ratio, example curves."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     valid = track_stats[track_stats["changepoint_frame"].notna()]
     if valid.empty:
@@ -1626,7 +1562,6 @@ def plot_growth_phases(tracked, track_stats):
     fig.update_yaxes(title_text="Area / Area(0)", row=1, col=3)
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, bin_menu_traces=[hist_idx], height=500)
 
@@ -1640,8 +1575,6 @@ def plot_growth_phases(tracked, track_stats):
 
 def plot_fate_prediction(prediction_df, summary):
     """3-panel: ROC curve, feature importance, probability distribution."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
     from sklearn.metrics import roc_curve
 
     fig = make_subplots(
@@ -1711,15 +1644,15 @@ def plot_fate_prediction(prediction_df, summary):
     fig.update_layout(
         barmode="overlay",
         legend=dict(groupclick="toggleitem"),
+    )
+    _finalize_plotly(
+        fig, bin_menu_traces=hist_indices, height=500,
         margin=dict(t=80, b=50, l=80, r=30),
     )
-    _finalize_plotly(fig, bin_menu_traces=hist_indices, height=500)
 
 
 def plot_spatial_gradient(gradient_df, summary):
     """4-panel: spatial scatter by fate, death rate by quartile, density by axis, position distributions."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     gradient_axis = summary["gradient_axis"]
     axis_label = gradient_axis.replace("centroid_", "").upper()
@@ -1815,15 +1748,12 @@ def plot_spatial_gradient(gradient_df, summary):
     fig.update_layout(
         barmode="overlay",
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, bin_menu_traces=hist_indices, height=500)
 
 
 def plot_fluorescence_vs_volume(tracked):
     """Scatter total and mean fluorescence vs cell volume."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     full = tracked.dropna(subset=["total_intensity", "volume"])
     sample = full.sample(n=min(3000, len(full)), random_state=42)
@@ -1862,7 +1792,7 @@ def plot_fluorescence_vs_volume(tracked):
                 xanchor="left", yanchor="top",
             )
 
-    fig.update_layout(margin=dict(t=80, b=50, l=60, r=30))
+    
     _finalize_plotly(fig, height=520)
 
 
@@ -1871,7 +1801,6 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
 
     Generic for any per-cell metric (CV, nNRM, etc.).
     """
-    from plotly.subplots import make_subplots
 
     fig = make_subplots(
         rows=1, cols=3,
@@ -1949,7 +1878,6 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
     fig.update_yaxes(title_text=label, row=1, col=3)
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, height=500)
 
@@ -1962,8 +1890,6 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
 
 def plot_fluorescence_disappearance(tracked, track_stats, threshold=-0.3):
     """3-panel: drop distribution, disappearance timing, phase comparison."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
 
     fig = make_subplots(
         rows=1, cols=3,
@@ -2057,15 +1983,12 @@ def plot_fluorescence_disappearance(tracked, track_stats, threshold=-0.3):
                      row=1, col=3)
     fig.update_layout(
         showlegend=False,
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, bin_menu_traces=[hist_idx], height=500)
 
 
 def plot_initial_features_vs_lifespan(tracked, track_stats):
     """3-panel scatter: frame-0 fluorescence, CV, nNRM vs track lifetime."""
-    import plotly.graph_objects as go
-    from plotly.subplots import make_subplots
     from scipy.stats import spearmanr
 
     frame0_tracks = _frame0_track_ids(tracked)
@@ -2120,7 +2043,6 @@ def plot_initial_features_vs_lifespan(tracked, track_stats):
 
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
-        margin=dict(t=80, b=50, l=60, r=30),
     )
     _finalize_plotly(fig, height=500)
 
