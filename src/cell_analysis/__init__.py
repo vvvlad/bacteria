@@ -1,6 +1,7 @@
 from .pipeline import (
     add_death_clustering as add_death_clustering,
     add_fate_prediction as add_fate_prediction,
+    add_frame0_fate_comparison as add_frame0_fate_comparison,
     add_fluorescence as add_fluorescence,
     add_spatial_gradient as add_spatial_gradient,
     filter_short_tracks as filter_short_tracks,

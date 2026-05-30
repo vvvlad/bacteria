@@ -577,7 +577,7 @@ Volume and surface area derived from area assuming spherical geometry: V = (4/3)
 
 8. **Nucleoid dispersal precedes lysis in 90% of dying cells**: CV drops from 0.632 (first frame) to 0.456 (last frame) in disappeared cells. Only 10% show CV increase before death — possibly a different death mechanism (rapid rupture without dispersal phase).
 
-9. **Cell fate is partially predictable from frame-0 features**: Mann-Whitney tests on the frame-0 cohort show cells that will die are already different at the start — smaller area (p=0.0008), higher CV (p<0.0001), higher nNRM (p<0.0001). Initial nucleoid heterogeneity is the strongest early predictor of cell fate.
+9. **Cell fate is partially predictable from frame-0 features**: Mann-Whitney tests on the frame-0 cohort (`compare_frame0_features_by_fate()` in `src/cell_analysis/matching.py`, reported in notebook §8.14 and `results/<run>/frame0_fate_comparison.csv`) show cells that will die are already different at the start — smaller area (p≈0.0008), higher CV (p<0.0001), higher nNRM (p<0.0001) on the initial run_01 dataset. Initial nucleoid heterogeneity is the strongest early predictor of cell fate. Continuous companion: `plot_initial_features_vs_lifespan()` (notebook §8.17) reports Spearman rho against lifetime for the same three features.
 
 10. **Cells that die later are larger at death** (r=0.30, early death median area 859 px vs late death 1196 px). Supports a "swell until critical membrane threshold" model where cells accumulate osmotic stress until the membrane can no longer compensate.
 
@@ -845,3 +845,19 @@ Reviewer flagged that several plots silently hid or subsampled data. Fixed the s
 - [x] **Scope annotated in titles.** Every survival-split panel now appends `(frame-0 cohort)` or `(all tracks)` to its title so the audience can see which population is plotted.
 - [x] **Notebook TOC §6.3 fixed.** Said "Area histograms at first and last frame" but `plot_area_distribution` pools across all frames; updated to "Area histogram pooled across all frames".
 - [ ] **Not changed (already labelled or intentional):** the 20-trace background curves in `plot_swelling_dynamics` and `plot_relative_fluorescence` and the 8 example tracks in `plot_growth_phases` — these are cosmetic; the headline mean ± SEM uses the full cohort, and the count is already in the legend/title.
+
+### Frame-0 fate Mann-Whitney is now reproducible from the notebook (2026-05-30)
+
+Section 8.14's markdown cited Mann-Whitney p-values (area p=0.0008, CV p<0.0001, nNRM p<0.0001) that were not computed by any cell in the report — they were a hand-written reference to a one-off scratch analysis. Reader couldn't trace where the numbers came from.
+
+- [x] `src/cell_analysis/matching.py` — added `compare_frame0_features_by_fate(tracked, track_stats, features=None)`. Mann-Whitney U (two-sided) on each feature, survived vs disappeared, on the frame-0 cohort. Returns a DataFrame with `feature, n_survived, n_died, median_survived, median_died, U, p_value`.
+- [x] `src/cell_analysis/pipeline.py` — added `add_frame0_fate_comparison()` wrapper that prints a small table and returns the DataFrame.
+- [x] `src/cell_analysis/__init__.py` — exports the wrapper.
+- [x] `notebooks/analysis.ipynb` — new code cell between the §8.14 markdown and the fate-prediction code cell. Saves `frame0_fate_comparison.csv`. Replaced the §8.14 markdown: removed the orphan hard-coded p-values; added explicit links to the new code cell, to `predict_fate_from_frame0()`/`plot_fate_prediction()` in the source tree, and to §8.17 (Spearman) / §6.5 (initial volume) / §8.15 (position) as related views. Back-link added from §8.17 to §8.14. TOC row and Export Results table updated.
+- [x] `tests/test_fate_prediction.py` — 3 new tests (output structure, cohort counts match, custom features). All 7 tests pass.
+
+### Notebook STACK_PATH / FLUOR_PATH fix (2026-05-30)
+
+`notebooks/analysis.ipynb` pointed at `data/gradient_0011/phase.tif` / `fluorescence.tif`, which don't exist — the actual files are `Gradient-0011.zvi  Ch0.tif` / `Ch1-BG.tif` (as `configs/run_01.yaml` already uses). Notebook raised `FileNotFoundError` on the first load cell.
+
+- [x] `notebooks/analysis.ipynb` — updated `STACK_PATH` and `FLUOR_PATH` in the Configuration cell to the actual filenames. Verified `load_experiment()` succeeds: `(25, 1040, 1388)` uint16 for both stacks.

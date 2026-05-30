@@ -341,6 +341,51 @@ def _get_frame0_with_fate(tracked, track_stats, columns=None):
     )
 
 
+def compare_frame0_features_by_fate(tracked, track_stats, features=None):
+    """Mann-Whitney U on each frame-0 feature, survived vs disappeared.
+
+    Univariate counterpart to :func:`predict_fate_from_frame0`: tests whether
+    each initial feature differs between cells that eventually die and cells
+    that survive. The logistic regression model in
+    :func:`predict_fate_from_frame0` combines these features jointly.
+
+    Parameters
+    ----------
+    tracked, track_stats : pd.DataFrame
+        Same inputs as :func:`predict_fate_from_frame0`.
+    features : list of str or None
+        Columns to test. Default: area, cv, nnrm.
+
+    Returns
+    -------
+    pd.DataFrame
+        One row per feature with: n_survived, n_died,
+        median_survived, median_died, U, p_value.
+    """
+    if features is None:
+        features = ["area", "cv", "nnrm"]
+
+    frame0_data = _get_frame0_with_fate(tracked, track_stats, columns=features)
+
+    rows = []
+    for feat in features:
+        sub = frame0_data[["disappeared", feat]].dropna()
+        survived = sub.loc[~sub["disappeared"], feat].values
+        died = sub.loc[sub["disappeared"], feat].values
+        u_stat, p = stats.mannwhitneyu(died, survived, alternative="two-sided")
+        rows.append({
+            "feature": feat,
+            "n_survived": int(len(survived)),
+            "n_died": int(len(died)),
+            "median_survived": float(np.median(survived)) if len(survived) else float("nan"),
+            "median_died": float(np.median(died)) if len(died) else float("nan"),
+            "U": float(u_stat),
+            "p_value": float(p),
+        })
+
+    return pd.DataFrame(rows)
+
+
 def predict_fate_from_frame0(tracked, track_stats, features=None):
     """Logistic regression predicting cell death from frame-0 features.
 

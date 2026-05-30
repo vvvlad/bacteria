@@ -338,6 +338,31 @@ def add_preburst_fluorescence(tracked, track_stats, n_frames=5):
     return track_stats
 
 
+def add_frame0_fate_comparison(tracked, track_stats, features=None):
+    """Mann-Whitney U test on frame-0 features, survived vs disappeared.
+
+    Univariate companion to :func:`add_fate_prediction` (logistic regression).
+    Returns the comparison DataFrame.
+    """
+    from .matching import compare_frame0_features_by_fate
+
+    result_df = compare_frame0_features_by_fate(
+        tracked, track_stats, features=features,
+    )
+
+    print("Frame-0 features by fate (Mann-Whitney U, two-sided):")
+    print(f"  Cohort: {int(result_df['n_survived'].iloc[0])} survived, "
+          f"{int(result_df['n_died'].iloc[0])} died")
+    for _, row in result_df.iterrows():
+        direction = "↑ died" if row["median_died"] > row["median_survived"] else "↓ died"
+        print(f"  {row['feature']:>5}: "
+              f"median {row['median_survived']:.3f} (surv) vs "
+              f"{row['median_died']:.3f} (died) [{direction}], "
+              f"U={row['U']:.0f}, p={row['p_value']:.2e}")
+
+    return result_df
+
+
 def add_fate_prediction(tracked, track_stats, features=None):
     """Predict cell fate from frame-0 features using logistic regression.
 

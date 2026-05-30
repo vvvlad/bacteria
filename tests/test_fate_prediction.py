@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
 
-from cell_analysis.matching import predict_fate_from_frame0
+from cell_analysis.matching import (
+    compare_frame0_features_by_fate,
+    predict_fate_from_frame0,
+)
 
 
 def _make_data():
@@ -54,3 +57,31 @@ def test_prediction_count_matches_frame0():
     result_df, summary = predict_fate_from_frame0(tracked, track_stats)
     assert len(result_df) == summary["n_cells"]
     assert summary["n_died"] + summary["n_survived"] == summary["n_cells"]
+
+
+def test_compare_output_structure():
+    tracked, track_stats = _make_data()
+    df = compare_frame0_features_by_fate(tracked, track_stats)
+    expected_cols = {
+        "feature", "n_survived", "n_died",
+        "median_survived", "median_died", "U", "p_value",
+    }
+    assert expected_cols.issubset(df.columns)
+    assert list(df["feature"]) == ["area", "cv", "nnrm"]
+
+
+def test_compare_cohort_counts_match_frame0():
+    tracked, track_stats = _make_data()
+    df = compare_frame0_features_by_fate(tracked, track_stats)
+    n_total_expected = int(track_stats["disappeared"].notna().sum())
+    for _, row in df.iterrows():
+        assert row["n_survived"] + row["n_died"] == n_total_expected
+
+
+def test_compare_custom_features():
+    tracked, track_stats = _make_data()
+    df = compare_frame0_features_by_fate(
+        tracked, track_stats, features=["area"],
+    )
+    assert list(df["feature"]) == ["area"]
+    assert (df["p_value"].between(0, 1)).all()

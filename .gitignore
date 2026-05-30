@@ -30,3 +30,4 @@ docs/superpowers/specs/2026-05-26-papermill-runner-design.md
 # Generated reports (large HTML files from papermill runs)
 results/*/report.html
 results/*/report_failed.ipynb
+uv.lock
