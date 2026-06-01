@@ -1,5 +1,6 @@
 """CLI runner for executing analysis notebooks via papermill."""
 
+import re
 import shutil
 import sys
 import tempfile
@@ -124,6 +125,15 @@ def run_single_config(config_path):
     return not failed
 
 
+BODY_RE = re.compile(r"<body\b[^>]*>", re.IGNORECASE)
+BACK_LINK = (
+    '\n<div style="font-family:-apple-system,system-ui,sans-serif;'
+    'max-width:800px;margin:20px auto;padding:0 20px;">'
+    '<a href="../index.html" style="color:#0366d6;text-decoration:none;">'
+    '&larr; Back to index</a></div>'
+)
+
+
 def publish_reports():
     docs_dir = REPO_ROOT / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -137,7 +147,9 @@ def publish_reports():
             continue
         target = docs_dir / run_dir.name
         target.mkdir(parents=True, exist_ok=True)
-        shutil.copy(report, target / "report.html")
+        html = report.read_text(encoding="utf-8")
+        html = BODY_RE.sub(lambda m: m.group(0) + BACK_LINK, html, count=1)
+        (target / "report.html").write_text(html, encoding="utf-8")
         run_info = {"name": run_dir.name, "date": report.stat().st_mtime}
         if config.exists():
             with open(config) as f:
