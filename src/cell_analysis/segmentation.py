@@ -44,6 +44,13 @@ def _resolve_gpu(gpu: bool) -> bool:
 # Cellpose-based detection (recommended)
 # ---------------------------------------------------------------------------
 
+def _make_cellpose_model(gpu: bool, model_type: str | None):
+    from cellpose.models import CellposeModel
+
+    kwargs = {"pretrained_model": model_type} if model_type else {}
+    return CellposeModel(gpu=_resolve_gpu(gpu), **kwargs)
+
+
 def detect_cells_frame(
     frame: np.ndarray,
     diameter: float | None = None,
@@ -53,6 +60,7 @@ def detect_cells_frame(
     exclude_edges: bool = True,
     gpu: bool = False,
     resample: bool = False,
+    model_type: str | None = None,
     _model=None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Detect round cells in a single phase-contrast frame using Cellpose.
@@ -90,10 +98,8 @@ def detect_cells_frame(
     labels : np.ndarray, shape (Y, X)
         Label image (0 = background, >0 = cell ID).
     """
-    from cellpose.models import CellposeModel
-
     if _model is None:
-        _model = CellposeModel(gpu=_resolve_gpu(gpu))
+        _model = _make_cellpose_model(gpu, model_type)
 
     # Invert: dark cells become bright for Cellpose
     inverted = frame.max() - frame
@@ -146,6 +152,7 @@ def detect_cells_stack(
     exclude_edges: bool = True,
     gpu: bool = False,
     resample: bool = False,
+    model_type: str | None = None,
 ) -> tuple[list[np.ndarray], np.ndarray]:
     """Detect cells in every frame of a time-lapse stack using Cellpose.
 
@@ -165,9 +172,7 @@ def detect_cells_stack(
     label_stack : np.ndarray
         Label stack with shape (T, Y, X).
     """
-    from cellpose.models import CellposeModel
-
-    model = CellposeModel(gpu=_resolve_gpu(gpu))
+    model = _make_cellpose_model(gpu, model_type)
 
     centroids_per_frame = []
     label_stack = np.zeros_like(stack, dtype=np.int32)
@@ -197,6 +202,7 @@ def detect_nuclei_stack(
     min_area: int = 100,
     gpu: bool = False,
     resample: bool = False,
+    model_type: str | None = None,
 ) -> np.ndarray:
     """Segment fluorescent nuclei across all frames using Cellpose.
 
@@ -218,9 +224,7 @@ def detect_nuclei_stack(
     nucleus_label_stack : np.ndarray
         Label stack (T, Y, X) with integer nucleus IDs.
     """
-    from cellpose.models import CellposeModel
-
-    model = CellposeModel(gpu=_resolve_gpu(gpu))
+    model = _make_cellpose_model(gpu, model_type)
     T, H, W = fluor_stack.shape
     label_stack = np.zeros((T, H, W), dtype=np.int32)
 
@@ -248,6 +252,59 @@ def detect_nuclei_stack(
         print(f"  Frame {t:2d}: {n} nuclei")
 
     return label_stack
+
+
+def profile_nucleus_detection(
+    fluor_stack: np.ndarray,
+    model_type: str | None = None,
+    diameter: float = 25,
+    gpu: bool = True,
+    resample: bool = False,
+) -> dict:
+    """Time one nucleus inference on the fluorescence stack (frame 0)."""
+    import time
+
+    model = _make_cellpose_model(gpu, model_type)
+    t0 = time.perf_counter()
+    model.eval(fluor_stack[0], diameter=diameter, resample=resample)
+    dt = time.perf_counter() - t0
+
+    T = fluor_stack.shape[0]
+    label = model_type or "default"
+    print(f"  Nucleus inference: {dt:.1f} s/frame  (model_type={label})")
+    print(f"  Nucleus pass over {T} frames: ~{dt * T / 60:.1f} min")
+    return {"sec_per_frame": dt, "n_frames": T, "est_minutes": dt * T / 60}
+
+
+def profile_detection(
+    stack: np.ndarray,
+    model_type: str | None = None,
+    nucleus_pass: bool = True,
+    **detect_params,
+) -> dict:
+    """Time one detection call to estimate full-stack Cellpose runtime.
+
+    Loads the model once (excluded from the timing), runs one inference on
+    frame 0, then prints projected totals. Use this on slow hardware to
+    decide whether to switch model_type or skip nucleus segmentation.
+    """
+    import time
+
+    gpu = detect_params.pop("gpu", True)
+    model = _make_cellpose_model(gpu, model_type)
+
+    t0 = time.perf_counter()
+    detect_cells_frame(stack[0], _model=model, **detect_params)
+    dt = time.perf_counter() - t0
+
+    T = stack.shape[0]
+    passes = 2 if nucleus_pass else 1
+    label = model_type or "default"
+    print(f"  Inference: {dt:.1f} s/frame  (model_type={label})")
+    print(f"  Phase pass over {T} frames: ~{dt * T / 60:.1f} min")
+    if nucleus_pass:
+        print(f"  With nucleus pass: ~{dt * T * passes / 60:.1f} min")
+    return {"sec_per_frame": dt, "n_frames": T, "est_minutes": dt * T * passes / 60}
 
 
 # ---------------------------------------------------------------------------

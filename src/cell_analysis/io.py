@@ -61,6 +61,27 @@ def save_results(df, path: str | Path) -> None:
     df.to_csv(path, index=False)
 
 
+def export_notebook_html(
+    notebook_path: str | Path,
+    output_path: str | Path,
+) -> Path:
+    """Export an executed notebook to a self-contained HTML file."""
+    import nbformat
+    from nbconvert import HTMLExporter
+
+    exporter = HTMLExporter(
+        exclude_input=True,
+        exclude_input_prompt=True,
+        exclude_output_prompt=True,
+    )
+    nb = nbformat.read(notebook_path, as_version=4)
+    body, _ = exporter.from_notebook_node(nb)
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(body, encoding="utf-8")
+    return output_path
+
+
 def save_summary(data: dict, path: str | Path) -> None:
     """Flatten a nested summary dict and save as a single-row CSV.
 

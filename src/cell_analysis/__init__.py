@@ -26,8 +26,14 @@ from .segmentation import (
     detect_cells_frame as detect_cells_frame,
     detect_cells_stack as detect_cells_stack,
     detect_nuclei_stack as detect_nuclei_stack,
+    profile_detection as profile_detection,
+    profile_nucleus_detection as profile_nucleus_detection,
 )
-from .io import save_results as save_results, save_summary as save_summary
+from .io import (
+    save_results as save_results,
+    save_summary as save_summary,
+    export_notebook_html as export_notebook_html,
+)
 from .plotting import (
     PLOT_SOURCES as PLOT_SOURCES,
     show_with_source as show_with_source,

@@ -9,14 +9,15 @@ from pathlib import Path
 import nbformat
 import papermill as pm
 import yaml
-from nbconvert import HTMLExporter
+
+from cell_analysis.io import export_notebook_html
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 ALLOWED_KEYS = {
     "RUN_NAME", "STACK_PATH", "FLUOR_PATH", "CONFIG_PATH",
     "GATING_Z_THRESHOLD",
-    "DETECT_PARAMS",
+    "DETECT_PARAMS", "MODEL_TYPE",
     "SEARCH_RANGE", "MEMORY",
     "MERGE_MAX_DISTANCE", "MERGE_MAX_GAP",
     "MIN_TRACK_DETECTIONS",
@@ -32,6 +33,7 @@ TYPE_RULES = {
     "CONFIG_PATH": str,
     "GATING_Z_THRESHOLD": (int, float),
     "DETECT_PARAMS": dict,
+    "MODEL_TYPE": str,
     "SEARCH_RANGE": (int, float),
     "MEMORY": int,
     "MERGE_MAX_DISTANCE": (int, float),
@@ -85,6 +87,10 @@ def run_single_config(config_path):
     validate_config(config)
 
     config["CONFIG_PATH"] = str(config_path)
+    # The notebook's final cell skips its own HTML export when papermill
+    # injects this — the CLI does the export below so we have a single,
+    # consistent rendering of the executed tmp notebook.
+    config["EXPORT_HTML"] = False
 
     run_name = config["RUN_NAME"]
     notebook_path = REPO_ROOT / "notebooks" / "analysis.ipynb"
@@ -111,11 +117,7 @@ def run_single_config(config_path):
         failed = True
         shutil.copy(tmp_path, results_dir / "report_failed.ipynb")
 
-    exporter = HTMLExporter(exclude_input=True, exclude_input_prompt=True,
-                            exclude_output_prompt=True)
-    nb = nbformat.read(str(tmp_path), as_version=4)
-    body, _ = exporter.from_notebook_node(nb)
-    (results_dir / "report.html").write_text(body, encoding="utf-8")
+    export_notebook_html(tmp_path, results_dir / "report.html")
 
     shutil.copy(config_path, results_dir / "config.yaml")
 
