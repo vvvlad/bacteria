@@ -5,6 +5,7 @@ summary statistics so the notebook stays minimal.
 """
 
 import numpy as np
+import pandas as pd
 from pathlib import Path
 
 from .io import save_results, save_summary
@@ -58,7 +59,6 @@ def run_frame_gating(label_stack, z_threshold=3.5, results_dir=None):
     Returns (detections, bad_frames, diagnostics).
     """
     from .tracking import labels_to_detections, detect_bad_frames
-    from .io import save_results
 
     detections_raw = labels_to_detections(label_stack)
     bad_frames, diagnostics = detect_bad_frames(
@@ -132,15 +132,39 @@ def filter_short_tracks(tracked, track_stats, min_detections=4):
     return tracked, track_stats
 
 
-def add_geometry(tracked, track_stats):
-    """Add radius, volume, and surface_area columns (spherical assumption).
+def _relative_per_track(df, col):
+    """Return df[col] divided by its first non-null value per track.
 
-    Adds columns to *tracked* in-place. Returns a new *track_stats*
-    with mean_volume and mean_surface_area columns merged in.
+    NaN where the per-track baseline is <= 0. If the very first frame's
+    value is NaN, ``groupby.first()`` skips it and uses the next non-NaN
+    frame as the baseline.
     """
+    sorted_df = df.sort_values(["track_id", "frame"])
+    first = (
+        sorted_df.groupby("track_id")[col].first()
+        .rename("_first_value")
+    )
+    merged = df.merge(first, left_on="track_id", right_index=True, how="left")
+    rel = np.where(
+        merged["_first_value"] > 0,
+        merged[col] / merged["_first_value"],
+        np.nan,
+    )
+    return rel
+
+
+def add_geometry(tracked, track_stats, pixel_size_um=1.0):
+    """Add radius, volume, surface_area, and volume_rel columns.
+
+    Areas are converted from pixels² to (pixel_size_um · px)² before
+    radius/volume/surface_area are derived under a spherical assumption.
+    Pass ``pixel_size_um=1.0`` to keep raw pixel units.
+    """
+    tracked["area"] = tracked["area"] * pixel_size_um ** 2
     tracked["radius"] = np.sqrt(tracked["area"] / np.pi)
     tracked["volume"] = (4 / 3) * np.pi * tracked["radius"] ** 3
     tracked["surface_area"] = 4 * np.pi * tracked["radius"] ** 2
+    tracked["volume_rel"] = _relative_per_track(tracked, "volume")
 
     track_stats = track_stats.merge(
         tracked.groupby("track_id").agg(
@@ -151,25 +175,6 @@ def add_geometry(tracked, track_stats):
     )
 
     return tracked, track_stats
-
-
-def add_growth(tracked, track_stats):
-    """Compute per-track growth metrics and merge into track_stats.
-
-    Returns a new *track_stats* DataFrame with growth columns added.
-    """
-    from .tracking import compute_growth_stats
-
-    growth = compute_growth_stats(tracked)
-    track_stats = track_stats.merge(growth, on="track_id", how="left")
-
-    grew = track_stats["area_rel_max"].dropna()
-    print(f"Growth stats computed for {len(grew)} tracks")
-    print(f"Median max relative size: {grew.median():.2f}x")
-    print(f"Median growth rate: "
-          f"{track_stats['growth_rate_px_per_frame'].median():.1f} px/frame")
-
-    return track_stats
 
 
 def add_fluorescence(tracked, track_stats, fluor_stack, label_stack):
@@ -188,6 +193,7 @@ def add_fluorescence(tracked, track_stats, fluor_stack, label_stack):
         on=["frame", "label"],
         how="left",
     )
+    tracked["fluor_rel"] = _relative_per_track(tracked, "mean_intensity")
 
     matched = tracked["mean_intensity"].notna().sum()
     total = len(tracked)
@@ -212,26 +218,101 @@ def add_fluorescence(tracked, track_stats, fluor_stack, label_stack):
     return tracked, track_stats
 
 
-def add_fluorescence_disappearance(tracked, track_stats, threshold=-0.3,
-                                    drop_window=1):
-    """Detect per-track fluorescence disappearance and merge into track_stats.
+def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
+                              flat_threshold_ratio=1.5):
+    """Compute per-cell-per-frame nucleoid spatial-distribution metrics.
 
-    Returns a new *track_stats* DataFrame with fluor_disappearance_frame
-    and max_drop columns added.
+    Adds two columns to *tracked*:
+
+      mean_edge_distance_norm
+          Mean distance from suprathreshold pixels to the cell-mask edge,
+          divided by R/3 where R = sqrt(area_pixels / π). Values > 1
+          indicate intensity clustered toward the cell center; < 1 toward
+          the edge.
+      gaussian_sigma_norm
+          σ of the 2D intensity-weighted spatial distribution of
+          suprathreshold pixels, divided by R. σ = sqrt of the mean of
+          eigenvalues of the weighted covariance matrix.
+
+    Threshold rule: pixels with intensity > mean(cell). If the cell's
+    max/mean ratio < flat_threshold_ratio (distribution already flat),
+    fall back to intensity > 0.5 * mean.
+
+    Returns (tracked, track_stats) with the new per-cell columns in *tracked*
+    and per-track mean aggregates ``mean_edge_distance_norm`` and
+    ``mean_gaussian_sigma_norm`` in *track_stats*.
     """
-    from .matching import detect_fluorescence_disappearance
+    from scipy.ndimage import distance_transform_edt, find_objects
 
-    fluor_disapp = detect_fluorescence_disappearance(
-        tracked, threshold=threshold, drop_window=drop_window,
+    edge_vals = np.full(len(tracked), np.nan)
+    sigma_vals = np.full(len(tracked), np.nan)
+    labels_arr = tracked["label"].to_numpy()
+
+    by_frame = tracked.groupby("frame").indices
+    for t, idx_arr in by_frame.items():
+        frame_labels = label_stack[int(t)]
+        fluor_frame = fluor_stack[int(t)]
+        slices = find_objects(frame_labels)
+        for row_idx in idx_arr:
+            label = int(labels_arr[row_idx])
+            sl = slices[label - 1] if 0 < label <= len(slices) else None
+            if sl is None:
+                continue
+            crop_mask = frame_labels[sl] == label
+            if not crop_mask.any():
+                continue
+            pixels = fluor_frame[sl][crop_mask].astype(np.float64)
+            if pixels.size == 0 or pixels.mean() <= 0:
+                continue
+            cell_mean = pixels.mean()
+            if pixels.max() / cell_mean < flat_threshold_ratio:
+                threshold = 0.5 * cell_mean
+            else:
+                threshold = cell_mean
+            keep = pixels > threshold
+            if not keep.any():
+                continue
+
+            R = np.sqrt(crop_mask.sum() / np.pi)
+
+            edt = distance_transform_edt(crop_mask)
+            edt_vals = edt[crop_mask][keep]
+            edge_vals[row_idx] = edt_vals.mean() / (R / 3.0)
+
+            coords = np.argwhere(crop_mask)[keep]
+            weights = pixels[keep]
+            wsum = weights.sum()
+            if wsum <= 0:
+                continue
+            cy = (coords[:, 0] * weights).sum() / wsum
+            cx = (coords[:, 1] * weights).sum() / wsum
+            dy = coords[:, 0] - cy
+            dx = coords[:, 1] - cx
+            cov_yy = (weights * dy * dy).sum() / wsum
+            cov_xx = (weights * dx * dx).sum() / wsum
+            cov_yx = (weights * dy * dx).sum() / wsum
+            cov = np.array([[cov_yy, cov_yx], [cov_yx, cov_xx]])
+            eigvals = np.linalg.eigvalsh(cov)
+            sigma = float(np.sqrt(max(0.0, eigvals.mean())))
+            sigma_vals[row_idx] = sigma / R
+
+    tracked = tracked.copy()
+    tracked["mean_edge_distance_norm"] = edge_vals
+    tracked["gaussian_sigma_norm"] = sigma_vals
+
+    track_stats = track_stats.merge(
+        tracked.groupby("track_id").agg(
+            mean_edge_distance_norm=("mean_edge_distance_norm", "mean"),
+            mean_gaussian_sigma_norm=("gaussian_sigma_norm", "mean"),
+        ),
+        on="track_id", how="left",
     )
-    n_detected = fluor_disapp["fluor_disappearance_frame"].notna().sum()
-    window_label = "single-frame" if drop_window == 1 else f"{drop_window}-frame"
-    print(f"Fluorescence disappearance detected: "
-          f"{n_detected}/{len(fluor_disapp)} tracks "
-          f"(threshold: {threshold:.0%} {window_label} drop)")
 
-    track_stats = track_stats.merge(fluor_disapp, on="track_id", how="left")
-    return track_stats
+    n_valid = int(np.isfinite(edge_vals).sum())
+    print(f"Nucleoid distribution: {n_valid}/{len(tracked)} "
+          f"cell-frames measured")
+
+    return tracked, track_stats
 
 
 def add_fluorescence_concentration(tracked):
@@ -249,24 +330,69 @@ def add_fluorescence_concentration(tracked):
     return tracked
 
 
-def add_migration(tracked, track_stats):
-    """Compute per-frame speed and per-track migration statistics.
+def add_fluorescence_alignment(tracked, track_stats, fluor_stack, label_stack,
+                               window=3):
+    """Build a long-form DataFrame of windowed fluorescence around each
+    disappeared cell's last detection.
 
-    Adds 'speed' column to *tracked* in-place. Returns new *track_stats*
-    with migration columns merged in.
+    Returns DataFrame with columns ``track_id, offset, mean_intensity, F_norm``
+    where offset ∈ [-window, +window] (frame relative to last_frame) and
+    F_norm = mean_intensity(offset) / mean_intensity(-window). Survived tracks
+    are excluded. Tracks whose offset=-window observation is missing are
+    dropped (no baseline to normalize against).
     """
-    from .tracking import compute_migration_stats
+    from .matching import measure_post_disappearance_fluorescence
 
-    migration = compute_migration_stats(tracked, per_frame=tracked)
-    track_stats = track_stats.merge(migration, on="track_id", how="left")
+    disappeared = track_stats[track_stats["disappeared"]][
+        ["track_id", "last_frame"]
+    ]
 
-    valid = track_stats["mean_speed"].notna()
-    print(f"Migration stats: {valid.sum()} tracks")
-    print(f"Median mean speed: {track_stats.loc[valid, 'mean_speed'].median():.1f} px/frame")
-    print(f"Median net displacement: "
-          f"{track_stats.loc[valid, 'net_displacement'].median():.1f} px")
+    last_labels = (
+        tracked.merge(
+            disappeared.rename(columns={"last_frame": "_lf"}),
+            on="track_id",
+        )
+        .query("frame == _lf")
+        [["track_id", "label"]]
+        .rename(columns={"label": "last_frame_label"})
+    )
 
-    return tracked, track_stats
+    post = measure_post_disappearance_fluorescence(
+        track_stats, last_labels, fluor_stack, label_stack, window=window,
+    )
+
+    pre_and_at = (
+        tracked.merge(disappeared, on="track_id")
+        [["track_id", "frame", "mean_intensity", "last_frame"]]
+    )
+    pre_and_at = pre_and_at[
+        (pre_and_at["frame"] >= pre_and_at["last_frame"] - window)
+        & (pre_and_at["frame"] <= pre_and_at["last_frame"])
+    ]
+    post = post.merge(disappeared, on="track_id")
+
+    full = pd.concat([pre_and_at, post], ignore_index=True)
+    full["offset"] = full["frame"] - full["last_frame"]
+    full = full[["track_id", "offset", "mean_intensity"]]
+
+    out = []
+    for tid, grp in full.groupby("track_id"):
+        grp = grp.set_index("offset").reindex(range(-window, window + 1))
+        if pd.isna(grp.loc[-window, "mean_intensity"]):
+            continue
+        baseline = grp.loc[-window, "mean_intensity"]
+        grp["F_norm"] = grp["mean_intensity"] / baseline
+        grp["track_id"] = tid
+        out.append(grp.reset_index())
+
+    if not out:
+        return pd.DataFrame(
+            columns=["track_id", "offset", "mean_intensity", "F_norm"]
+        )
+
+    return pd.concat(out, ignore_index=True)[
+        ["track_id", "offset", "mean_intensity", "F_norm"]
+    ]
 
 
 def add_sav_ratio(tracked):
@@ -284,35 +410,6 @@ def add_sav_ratio(tracked):
     print(f"Median SA:V at frame 0: "
           f"{tracked.loc[tracked['frame'] == 0, 'sav_ratio'].median():.4f}")
     return tracked
-
-
-def add_death_clustering(tracked, track_stats, n_permutations=1000):
-    """Compute spatial clustering of cell death and print results.
-
-    Returns (clustering_result dict, track_stats with last_y/last_x).
-    """
-    from .matching import compute_death_clustering
-
-    last_obs = (
-        tracked.sort_values("frame")
-        .groupby("track_id")
-        .agg(last_y=("centroid_y", "last"), last_x=("centroid_x", "last"))
-    )
-    ts = track_stats.merge(last_obs, on="track_id", how="left")
-
-    result = compute_death_clustering(ts, n_permutations=n_permutations)
-
-    if not np.isnan(result["clustering_ratio"]):
-        print(f"Death clustering analysis ({n_permutations} permutations):")
-        print(f"  Mean NN distance (deaths): {result['mean_nn_distance_deaths']:.1f} px")
-        print(f"  Mean NN distance (random): {result['mean_nn_distance_random']:.1f} px")
-        print(f"  Clustering ratio: {result['clustering_ratio']:.3f} "
-              f"({'clustered' if result['clustering_ratio'] < 0.8 else 'not clustered'})")
-        print(f"  p-value: {result['p_value']:.4f}")
-    else:
-        print("Death clustering: too few deaths for analysis")
-
-    return result, ts
 
 
 def add_preburst_fluorescence(tracked, track_stats, n_frames=5):
@@ -383,55 +480,72 @@ def add_fate_prediction(tracked, track_stats, features=None):
         direction = "↑ death" if coef > 0 else "↓ death"
         print(f"    {feat}: {coef:+.3f} ({direction})")
 
+    pc = summary["per_class"]
+    print("  Per-class performance (probability threshold 0.5):")
+    for label in ("survived", "disappeared"):
+        m = pc[label]
+        print(f"    {label:12s} (n={m['support']:3d}): "
+              f"precision={m['precision']:.3f}, "
+              f"recall={m['recall']:.3f}, "
+              f"f1={m['f1']:.3f}")
+
+    cm = summary["confusion_matrix"]
+    print("  Confusion matrix (rows = actual, cols = predicted):")
+    print("                              pred: survived  pred: disappeared")
+    print(f"    actual: survived          {cm['TN']:7d}       {cm['FP']:7d}")
+    print(f"    actual: disappeared       {cm['FN']:7d}       {cm['TP']:7d}")
+
     return result_df, summary
 
 
-def add_spatial_gradient(tracked, track_stats):
-    """Analyze spatial gradient in cell fate across the field of view.
+def print_fate_comparison(summary_full, summary_no_area, f1_threshold=0.02):
+    """Print a side-by-side table comparing two fate-prediction summaries.
 
-    Returns (gradient_df, gradient_summary).
+    Conventionally invoked from §8.14 with the 5-feature (full) summary and
+    the 4-feature (no-area) summary. Prints AUC, accuracy, per-class recall,
+    and per-class F1 for both. If the no-area variant improves BOTH per-class
+    F1 by ≥ ``f1_threshold`` absolute, prints a "consider swapping" hint.
     """
-    from .matching import analyze_spatial_gradient
+    rows = [
+        ("AUC",
+         summary_full["auc"], summary_no_area["auc"]),
+        ("Accuracy",
+         summary_full["accuracy"], summary_no_area["accuracy"]),
+        ("Recall (survived)",
+         summary_full["per_class"]["survived"]["recall"],
+         summary_no_area["per_class"]["survived"]["recall"]),
+        ("Recall (disappeared)",
+         summary_full["per_class"]["disappeared"]["recall"],
+         summary_no_area["per_class"]["disappeared"]["recall"]),
+        ("F1 (survived)",
+         summary_full["per_class"]["survived"]["f1"],
+         summary_no_area["per_class"]["survived"]["f1"]),
+        ("F1 (disappeared)",
+         summary_full["per_class"]["disappeared"]["f1"],
+         summary_no_area["per_class"]["disappeared"]["f1"]),
+    ]
 
-    gradient_df, summary = analyze_spatial_gradient(tracked, track_stats)
+    n_full = len(summary_full["feature_names"])
+    n_red = len(summary_no_area["feature_names"])
+    print("\nFeature-set comparison:")
+    print(f"                        full ({n_full})   no-area ({n_red})")
+    for label, a, b in rows:
+        print(f"  {label:21s} {a:.3f}      {b:.3f}")
 
-    axis_label = summary["gradient_axis"].replace("centroid_", "")
-    ax_stats = summary["axes_results"][summary["gradient_axis"]]
-
-    print(f"Spatial gradient analysis (dominant axis: {axis_label}):")
-    print(f"  Mann-Whitney p = {ax_stats['mann_whitney_p']:.2e}")
-    print(f"  Point-biserial r = {ax_stats['point_biserial_r']:+.3f} "
-          f"(p = {ax_stats['point_biserial_p']:.2e})")
-    print(f"  AUC (position only): {summary['auc_position_only']:.3f}")
-    print(f"  Death rate by quartile along {axis_label}:")
-    for q, rates in summary["quartile_death_rates"].items():
-        print(f"    Q{q}: {rates['death_rate']:.1%} "
-              f"({rates['n_died']}/{rates['n_cells']})")
-
-    return gradient_df, summary
-
-
-def add_growth_phases(tracked, track_stats, min_points=4):
-    """Detect growth phase transitions and merge into track_stats.
-
-    Returns new *track_stats* with changepoint_frame, slope_before,
-    slope_after, and slope_ratio columns.
-    """
-    from .tracking import detect_growth_phases
-
-    phases = detect_growth_phases(tracked, min_points=min_points)
-    track_stats = track_stats.merge(phases, on="track_id", how="left")
-
-    valid = track_stats["changepoint_frame"].notna()
-    print(f"Growth phases detected: {valid.sum()} tracks")
-    if valid.any():
-        print(f"Median changepoint frame: "
-              f"{track_stats.loc[valid, 'changepoint_frame'].median():.0f}")
-        ratios = track_stats.loc[valid, "slope_ratio"].dropna()
-        if len(ratios) > 0:
-            print(f"Median slope ratio (after/before): {ratios.median():.2f}")
-
-    return track_stats
+    surv_f1_delta = (
+        summary_no_area["per_class"]["survived"]["f1"]
+        - summary_full["per_class"]["survived"]["f1"]
+    )
+    dis_f1_delta = (
+        summary_no_area["per_class"]["disappeared"]["f1"]
+        - summary_full["per_class"]["disappeared"]["f1"]
+    )
+    if surv_f1_delta >= f1_threshold and dis_f1_delta >= f1_threshold:
+        print("  (no-area variant improves both per-class F1 by "
+              f"≥ {f1_threshold:.2f}; consider permanently swapping "
+              "FATE_FEATURES_FULL → FATE_FEATURES_NO_AREA in the notebook)")
+    else:
+        print("  (differences small; full feature set remains the default)")
 
 
 def run_nucleus_persistence(label_stack, nucleus_label_stack,
@@ -456,8 +570,6 @@ def run_nucleus_persistence(label_stack, nucleus_label_stack,
 
     Returns (DataFrame with per-frame counts, summary dict).
     """
-    import pandas as pd
-
     assert label_stack.shape == nucleus_label_stack.shape, (
         f"Shape mismatch: label_stack {label_stack.shape} vs "
         f"nucleus_label_stack {nucleus_label_stack.shape}"
@@ -535,17 +647,13 @@ def export_all_results(
     results_dir, *,
     tracked, track_stats, diagnostics,
     merge_log, prediction_df, prediction_summary,
-    gradient_df, gradient_summary,
-    clustering_result, comparison_df, persistence_summary,
+    comparison_df, persistence_summary,
 ):
     """Save all analysis outputs to *results_dir* as CSV files.
 
     DataFrames are saved directly; summary dicts are flattened to
     single-row CSVs.
     """
-    from .io import save_results, save_summary
-    from pathlib import Path
-
     results_dir = Path(results_dir)
     saved = []
 
@@ -554,7 +662,6 @@ def export_all_results(
         (track_stats, "track_statistics.csv"),
         (diagnostics, "frame_diagnostics.csv"),
         (prediction_df, "fate_predictions.csv"),
-        (gradient_df, "spatial_gradient.csv"),
         (comparison_df, "nucleus_persistence.csv"),
     ]:
         save_results(df, results_dir / name)
@@ -565,9 +672,7 @@ def export_all_results(
         saved.append("merge_log.csv")
 
     for summary, name in [
-        (clustering_result, "clustering_summary.csv"),
         (prediction_summary, "fate_prediction_summary.csv"),
-        (gradient_summary, "spatial_gradient_summary.csv"),
         (persistence_summary, "nucleus_persistence_summary.csv"),
     ]:
         save_summary(summary, results_dir / name)

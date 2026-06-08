@@ -264,7 +264,9 @@ def profile_nucleus_detection(
     """Time one nucleus inference on the fluorescence stack (frame 0)."""
     import time
 
+    print("  Loading model (downloads on first use, can take minutes)...", flush=True)
     model = _make_cellpose_model(gpu, model_type)
+    print("  Running inference (cpsam on CPU is 5-15 min/frame at full res)...", flush=True)
     t0 = time.perf_counter()
     model.eval(fluor_stack[0], diameter=diameter, resample=resample)
     dt = time.perf_counter() - t0
@@ -291,7 +293,9 @@ def profile_detection(
     import time
 
     gpu = detect_params.pop("gpu", True)
+    print("  Loading model (downloads on first use, can take minutes)...", flush=True)
     model = _make_cellpose_model(gpu, model_type)
+    print("  Running inference (cpsam on CPU is 5-15 min/frame at full res)...", flush=True)
 
     t0 = time.perf_counter()
     detect_cells_frame(stack[0], _model=model, **detect_params)

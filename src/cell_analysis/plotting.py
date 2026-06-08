@@ -26,20 +26,13 @@ PLOT_SOURCES: dict[str, list[str]] = {
     "plot_swelling_vs_survival": ["tracked_cells.csv"],
     "plot_fluorescence_per_frame": ["tracked_cells.csv"],
     "plot_relative_fluorescence": ["tracked_cells.csv"],
+    "plot_fluorescence_alignment": ["fluorescence_alignment.csv"],
     "plot_fluorescence_vs_volume": ["tracked_cells.csv"],
     "plot_metric_dynamics": ["tracked_cells.csv", "track_statistics.csv"],
-    "plot_fluorescence_disappearance": ["tracked_cells.csv", "track_statistics.csv"],
-    "plot_growth_before_burst": ["tracked_cells.csv", "track_statistics.csv"],
-    "plot_growth_phases": ["tracked_cells.csv", "track_statistics.csv"],
     "plot_fluorescence_concentration": ["tracked_cells.csv"],
-    "plot_migration_speed": ["tracked_cells.csv", "track_statistics.csv"],
     "plot_sav_ratio": ["tracked_cells.csv", "track_statistics.csv"],
-    "plot_death_clustering": [
-        "tracked_cells.csv", "track_statistics.csv", "clustering_summary.csv",
-    ],
     "plot_preburst_fluorescence": ["tracked_cells.csv", "track_statistics.csv"],
     "plot_fate_prediction": ["fate_predictions.csv", "fate_prediction_summary.csv"],
-    "plot_spatial_gradient": ["spatial_gradient.csv", "spatial_gradient_summary.csv"],
     "plot_nucleus_persistence": [
         "nucleus_persistence.csv", "nucleus_persistence_summary.csv",
     ],
@@ -424,10 +417,16 @@ def plot_lifetime_distribution(track_stats):
     print(f"Cells lost at peak: {peak_count}")
 
 
-def plot_area_distribution(tracked):
-    """Show cell area histogram. Hover reveals equivalent spherical volume."""
+def plot_area_distribution(tracked, baseline_frames=3):
+    """Show cell area histogram pooled over the first ``baseline_frames`` frames.
 
-    areas = tracked["area"]
+    The window defaults to 3 (the cohort before medium changes drive swelling).
+    Set ``baseline_frames=1`` to restrict to frame 0 only. Hover reveals each
+    cell's equivalent spherical volume.
+    """
+
+    cohort = tracked[tracked["frame"] < baseline_frames]
+    areas = cohort["area"]
     median_area = areas.median()
 
     fig = go.Figure()
@@ -435,24 +434,27 @@ def plot_area_distribution(tracked):
         x=areas, nbinsx=30,
         marker_color="steelblue", marker_line_color="white",
         marker_line_width=1, name="Area",
-        hovertemplate="Area %{x:.0f} px\u00b2<br>Count %{y}<extra></extra>",
+        hovertemplate="Area %{x:.2f} \u00b5m\u00b2<br>Count %{y}<extra></extra>",
     ))
     fig.add_vline(
         x=median_area, line=dict(color="red", dash="dash"),
-        annotation_text=f"Median: {median_area:.0f} px\u00b2",
+        annotation_text=f"Median: {median_area:.2f} \u00b5m\u00b2",
         annotation_position="top right",
     )
     fig.update_layout(
-        title="Cell area distribution (all frames)",
-        xaxis=dict(title="Area (px\u00b2)"),
+        title=(
+            f"Cell area distribution (first {baseline_frames} frame"
+            f"{'s' if baseline_frames > 1 else ''} pooled)"
+        ),
+        xaxis=dict(title="Area (\u00b5m\u00b2)"),
         yaxis=dict(title="Count"),
         showlegend=False,
     )
     _finalize_plotly(fig, bin_menu_traces=[0], height=450)
 
-    print(f"Median area:         {tracked['area'].median():.0f} px\u00b2")
-    print(f"Median volume:       {tracked['volume'].median():.0f} px\u00b3")
-    print(f"Median surface area: {tracked['surface_area'].median():.0f} px\u00b2")
+    print(f"Median area:         {median_area:.2f} \u00b5m\u00b2")
+    print(f"Median volume:       {cohort['volume'].median():.2f} \u00b5m\u00b3")
+    print(f"Median surface area: {cohort['surface_area'].median():.2f} \u00b5m\u00b2")
 
 
 def plot_swelling_dynamics(tracked):
@@ -589,7 +591,7 @@ def plot_swelling_vs_survival(tracked):
                         line=dict(width=0)),
             name=label, legendgroup="panel1",
             hovertemplate=(
-                "V(0) %{x:.0f} px\u00b3<br>Max V(t)/V(0) %{y:.2f}"
+                "V(0) %{x:.2f} \u00b5m\u00b3<br>Max V(t)/V(0) %{y:.2f}"
                 f"<extra>{label}</extra>"
             ),
         ), row=1, col=1)
@@ -609,7 +611,7 @@ def plot_swelling_vs_survival(tracked):
             opacity=0.7,
             name=f"Linear fit (slope={coeffs[1]:.2e})",
             legendgroup="panel1",
-            hovertemplate="V(0) %{x:.0f}<br>fit %{y:.2f}<extra></extra>",
+            hovertemplate="V(0) %{x:.2f}<br>fit %{y:.2f}<extra></extra>",
         ), row=1, col=1)
 
     survived_ids = per_track.loc[per_track["survived"], "track_id"]
@@ -632,7 +634,7 @@ def plot_swelling_vs_survival(tracked):
         opacity=0.5, row=1, col=2,
     )
 
-    fig.update_xaxes(title_text="Initial volume V(0) (px\u00b3)", row=1, col=1)
+    fig.update_xaxes(title_text="Initial volume V(0) (\u00b5m\u00b3)", row=1, col=1)
     fig.update_yaxes(title_text="Max V(t) / V(0)", row=1, col=1)
     fig.update_xaxes(title_text="Frame", row=1, col=2, tickmode="array",
                      tickvals=list(range(int(cohort["frame"].min()),
@@ -648,8 +650,8 @@ def plot_swelling_vs_survival(tracked):
     print(f"Frame-0 cohort: {n_surv} survived, {n_dis} disappeared")
     v0_surv = per_track.loc[per_track["survived"], "V0"]
     v0_dis = per_track.loc[~per_track["survived"], "V0"]
-    print(f"Mean initial volume (survived):    {v0_surv.mean():.0f} ± {v0_surv.std():.0f} px³")
-    print(f"Mean initial volume (disappeared): {v0_dis.mean():.0f} ± {v0_dis.std():.0f} px³")
+    print(f"Mean initial volume (survived):    {v0_surv.mean():.2f} ± {v0_surv.std():.2f} µm³")
+    print(f"Mean initial volume (disappeared): {v0_dis.mean():.2f} ± {v0_dis.std():.2f} µm³")
     print(
         f"Median max swelling (survived):    "
         f"{per_track.loc[per_track['survived'], 'V_rel_max'].median():.3f}x"
@@ -820,122 +822,56 @@ def plot_relative_fluorescence(tracked):
     )
 
 
-def plot_growth_before_burst(tracked, track_stats):
-    """Area growth curves aligned to burst frame for disappeared cells."""
+def plot_fluorescence_alignment(alignment_df):
+    """Plot +/-window-frame fluorescence dynamics aligned to phase disappearance.
 
-    has_burst = track_stats[
-        track_stats["disappeared"] & track_stats["area_rel_max"].notna()
-    ]
-    if has_burst.empty:
-        print("No disappeared tracks with growth data.")
+    Per-cell normalized traces (low alpha) + population mean +/- SEM band.
+    Vertical line at offset=0 marks the phase mask vanishing frame.
+    """
+    if alignment_df.empty:
+        print("No disappeared cells to align.")
         return
 
-    burst_frame = has_burst.set_index("track_id")["last_frame"]
-    burst_ids = burst_frame.index
+    fig = make_subplots(rows=1, cols=1)
 
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=(
-            "Cell growth aligned to burst",
-            "Growth rate: disappeared vs. survived",
-            "Max swelling: disappeared vs. survived",
-        ),
-        horizontal_spacing=0.08,
-    )
+    for _, grp in alignment_df.groupby("track_id"):
+        grp = grp.sort_values("offset")
+        fig.add_trace(go.Scatter(
+            x=grp["offset"], y=grp["F_norm"], mode="lines",
+            line=dict(color="rgba(70,130,180,0.15)", width=1),
+            showlegend=False, hoverinfo="skip",
+        ), row=1, col=1)
 
-    aligned = []
-    track_color = _rgba("tomato", 0.18)
-    grouped = tracked.groupby("track_id")
-    for tid in burst_ids:
-        grp = grouped.get_group(tid).sort_values("frame")
-        a0 = grp["area"].iloc[0]
-        if a0 == 0:
-            continue
-        rel_frame = grp["frame"] - burst_frame[tid]
-        rel_area = grp["area"] / a0
-        aligned.append(pd.DataFrame({
-            "track_id": tid, "rel_frame": rel_frame, "area_rel": rel_area,
-        }))
-        if len(aligned) <= 30:
-            fig.add_trace(go.Scatter(
-                x=rel_frame, y=rel_area, mode="lines",
-                line=dict(color=track_color, width=1),
-                hoverinfo="skip", showlegend=False,
-                legendgroup="panel1",
-            ), row=1, col=1)
+    pop = (alignment_df.dropna(subset=["F_norm"])
+           .groupby("offset")["F_norm"].agg(["mean", "sem", "count"])
+           .reset_index())
 
-    if not aligned:
-        print("No valid growth curves.")
-        return
-
-    all_aligned = pd.concat(aligned, ignore_index=True)
-    stats = all_aligned.groupby("rel_frame")["area_rel"].agg(["mean", "sem"])
     _add_mean_sem_band(
-        fig, stats.index, stats["mean"], stats["sem"],
-        color="tomato", name=f"Mean ± SEM (n={len(aligned)})",
-        legendgroup="panel1", row=1, col=1, y_label="Area/Area(0)",
+        fig, pop["offset"], pop["mean"], pop["sem"],
+        color="steelblue", name="Mean +/- SEM", legendgroup="pop",
+        row=1, col=1, y_label="F(t)/F(-window)",
     )
-    fig.add_hline(y=1.0, line=dict(color="gray", dash="dash", width=1),
-                  opacity=0.5, row=1, col=1)
-    fig.add_vline(x=0, line=dict(color="black", dash="dot", width=1),
-                  opacity=0.5, row=1, col=1,
-                  annotation_text="Burst", annotation_position="top right")
 
-    survived_stats = track_stats[
-        ~track_stats["disappeared"] & track_stats["growth_rate_px_per_frame"].notna()
-    ]
-    rates = has_burst["growth_rate_px_per_frame"].dropna()
-    survived_rates = survived_stats["growth_rate_px_per_frame"]
-    hist_indices = []
-    for vals, label, color, group in [
-        (rates, "Disappeared", "tomato", "panel2"),
-        (survived_rates, "Survived", "steelblue", "panel2"),
-    ]:
-        if len(vals) == 0:
-            continue
-        fig.add_trace(go.Histogram(
-            x=vals, nbinsx=25, histnorm="probability density",
-            marker_color=color, opacity=0.6, name=f"{label} (rate)",
-            legendgroup=group,
-            hovertemplate="Rate %{x:.1f}<br>Density %{y:.2f}<extra></extra>",
-        ), row=1, col=2)
-        hist_indices.append(len(fig.data) - 1)
+    fig.add_vline(
+        x=0, line=dict(color="red", dash="dash"),
+        annotation_text="phase mask vanishes",
+        annotation_position="top right",
+    )
 
-    burst_max = has_burst["area_rel_max"].dropna()
-    survived_max = survived_stats["area_rel_max"].dropna()
-    for vals, label, color, group in [
-        (burst_max, "Disappeared", "tomato", "panel3"),
-        (survived_max, "Survived", "steelblue", "panel3"),
-    ]:
-        if len(vals) == 0:
-            continue
-        fig.add_trace(go.Histogram(
-            x=vals, nbinsx=25, histnorm="probability density",
-            marker_color=color, opacity=0.6, name=f"{label} (max)",
-            legendgroup=group,
-            hovertemplate="Max %{x:.2f}<br>Density %{y:.2f}<extra></extra>",
-        ), row=1, col=3)
-        hist_indices.append(len(fig.data) - 1)
-
-    fig.update_xaxes(title_text="Frames relative to burst", row=1, col=1)
-    fig.update_yaxes(title_text="Area / Area(0)", row=1, col=1)
-    fig.update_xaxes(title_text="Growth rate (px/frame)", row=1, col=2)
-    fig.update_yaxes(title_text="Density", row=1, col=2)
-    fig.update_xaxes(title_text="Max area / initial area", row=1, col=3)
-    fig.update_yaxes(title_text="Density", row=1, col=3)
     fig.update_layout(
-        barmode="overlay",
-        legend=dict(groupclick="toggleitem"),
+        title="Fluorescence aligned to phase disappearance",
+        xaxis=dict(title="Offset (frames relative to last detection)"),
+        yaxis=dict(title="F(offset) / F(-window)"),
     )
-    _finalize_plotly(fig, bin_menu_traces=hist_indices, height=500)
+    _finalize_plotly(fig, height=480)
 
-    print(f"Disappeared tracks with growth data: {len(aligned)}")
-    print(f"Median max relative size (disappeared): {burst_max.median():.2f}x")
-    if len(survived_max) > 0:
-        print(f"Median max relative size (survived): {survived_max.median():.2f}x")
-    print(f"Median growth rate (disappeared): {rates.median():.1f} px/frame")
-    if len(survived_rates) > 0:
-        print(f"Median growth rate (survived): {survived_rates.median():.1f} px/frame")
+    n = alignment_df["track_id"].nunique()
+    window = int(alignment_df["offset"].abs().max())
+    medians = (alignment_df.dropna(subset=["F_norm"])
+               .groupby("offset")["F_norm"].median())
+    print(f"Aligned {n} disappeared tracks (window=+/-{window})")
+    for off in sorted(medians.index):
+        print(f"  offset {int(off):+d}: median F_norm = {medians.loc[off]:.3f}")
 
 
 def plot_nucleus_persistence(comparison_df):
@@ -1079,14 +1015,14 @@ def plot_fluorescence_concentration(tracked):
     frame_ticks = list(per_frame.index)
     fig.update_xaxes(title_text="Frame", row=1, col=1, tickmode="array",
                      tickvals=frame_ticks)
-    fig.update_yaxes(title_text="F_total / Volume", row=1, col=1)
+    fig.update_yaxes(title_text="F_total / Volume (a.u. / µm³)", row=1, col=1)
     fig.update_xaxes(title_text="Frame", row=1, col=2, tickmode="array",
                      tickvals=list(range(int(tracked["frame"].min()),
                                          int(tracked["frame"].max()) + 1)))
-    fig.update_yaxes(title_text="F_total / Volume", row=1, col=2)
+    fig.update_yaxes(title_text="F_total / Volume (a.u. / µm³)", row=1, col=2)
     scope_note = _scatter_scope(sample, full)
-    fig.update_xaxes(title_text=f"Volume (px³) — {scope_note}", row=1, col=3)
-    fig.update_yaxes(title_text="F_total / Volume", row=1, col=3)
+    fig.update_xaxes(title_text=f"Volume (µm³) — {scope_note}", row=1, col=3)
+    fig.update_yaxes(title_text="F_total / Volume (a.u. / µm³)", row=1, col=3)
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
     )
@@ -1097,82 +1033,6 @@ def plot_fluorescence_concentration(tracked):
           f"{per_frame['mean'].iloc[-1]:.3f}")
     change = per_frame['mean'].iloc[-1] / per_frame['mean'].iloc[0]
     print(f"Change: {change:.2f}x")
-
-
-def plot_migration_speed(tracked, track_stats):
-    """3-panel: speed over time, outcome split, speed distribution."""
-
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=(
-            "Population mean migration speed per frame",
-            "Migration speed: disappeared vs. survived (all tracks)",
-            "Speed distribution: disappeared vs. survived",
-        ),
-        horizontal_spacing=0.08,
-    )
-
-    speed_data = tracked.dropna(subset=["speed"])
-    per_frame = speed_data.groupby("frame")["speed"].agg(["mean", "sem"])
-    _add_mean_sem_band(
-        fig, per_frame.index, per_frame["mean"], per_frame["sem"],
-        color="teal", name="Mean +/- SEM", legendgroup="panel1",
-        row=1, col=1, y_label="Speed",
-    )
-
-    survived_ids, disappeared_ids = _survival_split(tracked)
-    for label, ids, color in [
-        ("Survived", survived_ids, "steelblue"),
-        ("Disappeared", disappeared_ids, "tomato"),
-    ]:
-        sub = speed_data[speed_data["track_id"].isin(ids)]
-        if sub.empty:
-            continue
-        g = sub.groupby("frame")["speed"].agg(["mean", "sem"])
-        _add_mean_sem_band(
-            fig, g.index, g["mean"], g["sem"],
-            color=color, name=f"{label} (n={len(ids)})",
-            legendgroup="panel2", row=1, col=2, y_label="Speed",
-        )
-
-    valid = track_stats.dropna(subset=["mean_speed"])
-    dis = valid[valid["disappeared"]]
-    surv = valid[~valid["disappeared"]]
-    hist_indices = []
-    for vals, label, color in [
-        (dis["mean_speed"], "Disappeared", "tomato"),
-        (surv["mean_speed"], "Survived", "steelblue"),
-    ]:
-        if len(vals) == 0:
-            continue
-        fig.add_trace(go.Histogram(
-            x=vals, nbinsx=25, histnorm="probability density",
-            marker_color=color, opacity=0.6, name=label,
-            legendgroup="panel3",
-            hovertemplate="Speed %{x:.1f}<br>Density %{y:.2f}<extra></extra>",
-        ), row=1, col=3)
-        hist_indices.append(len(fig.data) - 1)
-
-    frame_ticks = list(per_frame.index)
-    fig.update_xaxes(title_text="Frame", row=1, col=1, tickmode="array",
-                     tickvals=frame_ticks)
-    fig.update_yaxes(title_text="Speed (px/frame)", row=1, col=1)
-    fig.update_xaxes(title_text="Frame", row=1, col=2, tickmode="array",
-                     tickvals=list(range(int(speed_data["frame"].min()),
-                                         int(speed_data["frame"].max()) + 1)))
-    fig.update_yaxes(title_text="Speed (px/frame)", row=1, col=2)
-    fig.update_xaxes(title_text="Mean speed (px/frame)", row=1, col=3)
-    fig.update_yaxes(title_text="Density", row=1, col=3)
-    fig.update_layout(
-        barmode="overlay",
-        legend=dict(groupclick="toggleitem"),
-    )
-    _finalize_plotly(fig, bin_menu_traces=hist_indices, height=500)
-
-    if len(dis) > 0:
-        print(f"Median speed (disappeared): {dis['mean_speed'].median():.1f} px/frame")
-    if len(surv) > 0:
-        print(f"Median speed (survived): {surv['mean_speed'].median():.1f} px/frame")
 
 
 def plot_sav_ratio(tracked, track_stats):
@@ -1245,7 +1105,7 @@ def plot_sav_ratio(tracked, track_stats):
     for col in (1, 2):
         fig.update_xaxes(title_text="Frame", tickmode="array",
                          tickvals=frame_ticks, row=1, col=col)
-        fig.update_yaxes(title_text="SA / V (px^-1)", row=1, col=col)
+        fig.update_yaxes(title_text="SA / V (µm⁻¹)", row=1, col=col)
     fig.update_xaxes(title_text="SA:V at last observation", row=1, col=3)
     fig.update_yaxes(title_text="Density", row=1, col=3)
     fig.update_layout(
@@ -1262,96 +1122,6 @@ def plot_sav_ratio(tracked, track_stats):
         print(f"Median SA:V at death: {dis_final.median():.4f}")
     if len(surv_final) > 0:
         print(f"Median SA:V at end (survived): {surv_final.median():.4f}")
-
-
-def plot_death_clustering(tracked, track_stats, clustering_result):
-    """3-panel: spatial map of deaths, null distribution, temporal clustering."""
-
-    survived = track_stats[~track_stats["disappeared"]]
-    died = track_stats[track_stats["disappeared"]]
-    p_val = clustering_result.get("p_value", float("nan"))
-
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=(
-            "Spatial distribution of cell fate",
-            f"Death clustering (p={p_val:.3f})",
-            "Temporal distribution of cell death",
-        ),
-        horizontal_spacing=0.08,
-    )
-
-    if "last_y" in survived.columns:
-        fig.add_trace(go.Scatter(
-            x=survived["last_x"], y=survived["last_y"], mode="markers",
-            marker=dict(color="steelblue", size=5, opacity=0.35,
-                        line=dict(width=0)),
-            name="Survived", legendgroup="panel1",
-            hovertemplate="X %{x:.0f}<br>Y %{y:.0f}<extra>Survived</extra>",
-        ), row=1, col=1)
-        fig.add_trace(go.Scatter(
-            x=died["last_x"], y=died["last_y"], mode="markers",
-            marker=dict(color="tomato", size=7, opacity=0.7,
-                        line=dict(width=0)),
-            name="Disappeared", legendgroup="panel1",
-            hovertemplate="X %{x:.0f}<br>Y %{y:.0f}<extra>Disappeared</extra>",
-        ), row=1, col=1)
-
-    null = clustering_result.get("null_distribution", np.array([]))
-    observed = clustering_result.get("mean_nn_distance_deaths", np.nan)
-    if len(null) > 0 and not np.isnan(observed):
-        fig.add_trace(go.Histogram(
-            x=null, nbinsx=30, histnorm="probability density",
-            marker_color="gray", marker_line_color="white",
-            marker_line_width=1, opacity=0.7, name="Null",
-            legendgroup="panel2",
-            hovertemplate="NN %{x:.0f}<br>Density %{y:.3f}<extra></extra>",
-        ), row=1, col=2)
-        hist_idx = len(fig.data) - 1
-        fig.add_vline(
-            x=observed, line=dict(color="tomato", dash="dash", width=2),
-            annotation_text=f"Observed ({observed:.0f} px)",
-            annotation_position="top right",
-            row=1, col=2,
-        )
-    else:
-        hist_idx = None
-        fig.add_annotation(
-            x=0.5, y=0.5, xref="x2 domain", yref="y2 domain",
-            text="Insufficient data", showarrow=False,
-            font=dict(size=12),
-        )
-
-    if len(died) > 0 and "last_frame" in died.columns:
-        death_counts = died["last_frame"].value_counts().sort_index()
-        death_counts = death_counts.reindex(
-            range(int(tracked["frame"].max()) + 1), fill_value=0,
-        )
-        fig.add_trace(go.Bar(
-            x=list(death_counts.index), y=list(death_counts.values),
-            marker_color="tomato", marker_line_color="white",
-            marker_line_width=1, opacity=0.7, name="Deaths",
-            legendgroup="panel3",
-            hovertemplate="Frame %{x}<br>Deaths %{y}<extra></extra>",
-        ), row=1, col=3)
-
-    fig.update_xaxes(title_text="X (px)", row=1, col=1)
-    fig.update_yaxes(title_text="Y (px)", row=1, col=1,
-                     autorange="reversed", scaleanchor="x", scaleratio=1)
-    fig.update_xaxes(title_text="Mean NN distance (px)", row=1, col=2)
-    fig.update_yaxes(title_text="Density", row=1, col=2)
-    fig.update_xaxes(title_text="Frame", row=1, col=3,
-                     tickmode="array",
-                     tickvals=list(range(int(tracked["frame"].max()) + 1)))
-    fig.update_yaxes(title_text="Deaths", row=1, col=3)
-    fig.update_layout(
-        legend=dict(groupclick="toggleitem"),
-    )
-    _finalize_plotly(
-        fig,
-        bin_menu_traces=[hist_idx] if hist_idx is not None else None,
-        height=500,
-    )
 
 
 def plot_preburst_fluorescence(tracked, track_stats, n_frames=5):
@@ -1476,103 +1246,6 @@ def plot_preburst_fluorescence(tracked, track_stats, n_frames=5):
         print(f"Cells with pre-burst spike: {n_spike}/{n_spike + n_no}")
 
 
-def plot_growth_phases(tracked, track_stats):
-    """3-panel: changepoint distribution, slope ratio, example curves."""
-
-    valid = track_stats[track_stats["changepoint_frame"].notna()]
-    if valid.empty:
-        print("No tracks with detected growth phases.")
-        return
-
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=(
-            "Distribution of growth changepoints",
-            "Growth rate transition",
-            "Example growth curves (gray=changepoint)",
-        ),
-        horizontal_spacing=0.08,
-    )
-
-    max_frame = int(tracked["frame"].max())
-    fig.add_trace(go.Histogram(
-        x=valid["changepoint_frame"], nbinsx=max_frame + 2,
-        marker_color="teal", marker_line_color="white",
-        marker_line_width=1, name="Changepoint",
-        legendgroup="panel1", showlegend=False,
-        hovertemplate="Frame %{x}<br>Count %{y}<extra></extra>",
-    ), row=1, col=1)
-    hist_idx = len(fig.data) - 1
-
-    has_both = valid.dropna(subset=["slope_before", "slope_after"])
-    for label, mask_val, color in [
-        ("Survived", False, "steelblue"),
-        ("Disappeared", True, "tomato"),
-    ]:
-        sub = has_both[has_both["disappeared"] == mask_val]
-        if sub.empty:
-            continue
-        fig.add_trace(go.Scatter(
-            x=sub["slope_before"], y=sub["slope_after"], mode="markers",
-            marker=dict(color=color, size=6, opacity=0.55,
-                        line=dict(width=0)),
-            name=label, legendgroup="panel2",
-            hovertemplate="Before %{x:.1f}<br>After %{y:.1f}"
-                          f"<extra>{label}</extra>",
-        ), row=1, col=2)
-    if not has_both.empty:
-        lims = [
-            min(has_both["slope_before"].min(), has_both["slope_after"].min()) - 5,
-            max(has_both["slope_before"].max(), has_both["slope_after"].max()) + 5,
-        ]
-        fig.add_trace(go.Scatter(
-            x=lims, y=lims, mode="lines",
-            line=dict(color="black", dash="dash", width=1), opacity=0.3,
-            name="Equal slopes", legendgroup="panel2", hoverinfo="skip",
-        ), row=1, col=2)
-
-    rng = np.random.default_rng(42)
-    example_ids = rng.choice(
-        valid["track_id"].values, size=min(8, len(valid)), replace=False,
-    )
-    palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-               "#8c564b", "#e377c2", "#17becf"]
-    for i, tid in enumerate(example_ids):
-        grp = tracked[tracked["track_id"] == tid].sort_values("frame")
-        cp = int(valid.loc[valid["track_id"] == tid, "changepoint_frame"].iloc[0])
-        a0 = grp["area"].iloc[0]
-        if a0 == 0:
-            continue
-        clr = palette[i % len(palette)]
-        fig.add_trace(go.Scatter(
-            x=grp["frame"], y=grp["area"] / a0, mode="lines",
-            line=dict(color=clr, width=1.2), opacity=0.6,
-            name=f"Track {tid}", legendgroup="panel3",
-            hovertemplate=f"Track {tid}<br>Frame %{{x}}<br>"
-                          "Area %{y:.2f}<extra></extra>",
-        ), row=1, col=3)
-        fig.add_vline(x=cp, line=dict(color="gray", width=0.5),
-                      opacity=0.15, row=1, col=3)
-
-    fig.update_xaxes(title_text="Frame", row=1, col=1)
-    fig.update_yaxes(title_text="Count", row=1, col=1)
-    fig.update_xaxes(title_text="Slope before (px/frame)", row=1, col=2)
-    fig.update_yaxes(title_text="Slope after (px/frame)", row=1, col=2)
-    fig.update_xaxes(title_text="Frame", row=1, col=3)
-    fig.update_yaxes(title_text="Area / Area(0)", row=1, col=3)
-    fig.update_layout(
-        legend=dict(groupclick="toggleitem"),
-    )
-    _finalize_plotly(fig, bin_menu_traces=[hist_idx], height=500)
-
-    dis_cp = valid.loc[valid["disappeared"], "changepoint_frame"].dropna()
-    surv_cp = valid.loc[~valid["disappeared"], "changepoint_frame"].dropna()
-    if len(dis_cp) > 0:
-        print(f"Median changepoint (disappeared): frame {dis_cp.median():.0f}")
-    if len(surv_cp) > 0:
-        print(f"Median changepoint (survived): frame {surv_cp.median():.0f}")
-
-
 def plot_fate_prediction(prediction_df, summary):
     """3-panel: ROC curve, feature importance, probability distribution."""
     from sklearn.metrics import roc_curve
@@ -1651,107 +1324,6 @@ def plot_fate_prediction(prediction_df, summary):
     )
 
 
-def plot_spatial_gradient(gradient_df, summary):
-    """4-panel: spatial scatter by fate, death rate by quartile, density by axis, position distributions."""
-
-    gradient_axis = summary["gradient_axis"]
-    axis_label = gradient_axis.replace("centroid_", "").upper()
-    other_axis = "centroid_y" if gradient_axis == "centroid_x" else "centroid_x"
-    other_label = other_axis.replace("centroid_", "").upper()
-
-    died = gradient_df[gradient_df["disappeared"]]
-    survived = gradient_df[~gradient_df["disappeared"]]
-
-    fig = make_subplots(
-        rows=1, cols=4,
-        subplot_titles=(
-            "Cell fate by spatial position (frame 0)",
-            f"Death rate by position quartile ({axis_label})",
-            f"Position distribution along gradient axis ({axis_label})",
-            "Position-fate correlation by axis",
-        ),
-        horizontal_spacing=0.06,
-    )
-
-    fig.add_trace(go.Scatter(
-        x=survived["centroid_x"], y=survived["centroid_y"], mode="markers",
-        marker=dict(color="steelblue", size=5, opacity=0.45,
-                    line=dict(width=0)),
-        name="Survived", legendgroup="panel1",
-        hovertemplate="X %{x:.0f}<br>Y %{y:.0f}<extra>Survived</extra>",
-    ), row=1, col=1)
-    fig.add_trace(go.Scatter(
-        x=died["centroid_x"], y=died["centroid_y"], mode="markers",
-        marker=dict(color="tomato", size=5, opacity=0.45,
-                    line=dict(width=0)),
-        name="Died", legendgroup="panel1",
-        hovertemplate="X %{x:.0f}<br>Y %{y:.0f}<extra>Died</extra>",
-    ), row=1, col=1)
-
-    quartiles = sorted(summary["quartile_death_rates"].keys())
-    rates = [summary["quartile_death_rates"][q]["death_rate"] for q in quartiles]
-    n_cells = [summary["quartile_death_rates"][q]["n_cells"] for q in quartiles]
-    qpalette = ["#4575b4", "#abd9e9", "#fdae61", "#d73027"]
-    fig.add_trace(go.Bar(
-        x=[f"Q{q}" for q in quartiles], y=rates,
-        marker_color=qpalette[:len(quartiles)],
-        marker_line_color="white", marker_line_width=1,
-        text=[f"n={n}" for n in n_cells], textposition="outside",
-        name="Death rate", legendgroup="panel2", showlegend=False,
-        hovertemplate="%{x}: %{y:.2%}<extra></extra>",
-    ), row=1, col=2)
-
-    hist_indices = []
-    for vals, label, color in [
-        (survived[gradient_axis], "Survived", "steelblue"),
-        (died[gradient_axis], "Died", "tomato"),
-    ]:
-        if len(vals) == 0:
-            continue
-        fig.add_trace(go.Histogram(
-            x=vals, nbinsx=30, histnorm="probability density",
-            marker_color=color, marker_line_color="white",
-            marker_line_width=1, opacity=0.55, name=label,
-            legendgroup="panel3",
-            hovertemplate=(f"{axis_label} %{{x:.0f}}<br>Density %{{y:.4f}}"
-                           f"<extra>{label}</extra>"),
-        ), row=1, col=3)
-        hist_indices.append(len(fig.data) - 1)
-
-    corr_labels, corr_vals, corr_text, corr_colors = [], [], [], []
-    for axis_name, label_name in [(gradient_axis, axis_label),
-                                  (other_axis, other_label)]:
-        ax_stats = summary["axes_results"][axis_name]
-        p = ax_stats["mann_whitney_p"]
-        r = ax_stats["point_biserial_r"]
-        sig = "***" if p < 0.001 else "**" if p < 0.01 else "*" if p < 0.05 else "ns"
-        corr_labels.append(label_name)
-        corr_vals.append(abs(r))
-        corr_text.append(f"r={r:+.3f} {sig}")
-        corr_colors.append("tomato" if p < 0.05 else "gray")
-    fig.add_trace(go.Bar(
-        x=corr_vals, y=corr_labels, orientation="h",
-        marker_color=corr_colors, marker_line_color="white",
-        marker_line_width=1, text=corr_text, textposition="outside",
-        name="|r|", legendgroup="panel4", showlegend=False,
-        hovertemplate="%{y}: |r|=%{x:.3f}<extra></extra>",
-    ), row=1, col=4)
-
-    fig.update_xaxes(title_text="X position (px)", row=1, col=1)
-    fig.update_yaxes(title_text="Y position (px)", row=1, col=1,
-                     autorange="reversed", scaleanchor="x", scaleratio=1)
-    fig.update_xaxes(title_text=f"Quartile along {axis_label} axis", row=1, col=2)
-    fig.update_yaxes(title_text="Death rate", row=1, col=2)
-    fig.update_xaxes(title_text=f"{axis_label} position (px)", row=1, col=3)
-    fig.update_yaxes(title_text="Density", row=1, col=3)
-    fig.update_xaxes(title_text="|Point-biserial r|", row=1, col=4)
-    fig.update_layout(
-        barmode="overlay",
-        legend=dict(groupclick="toggleitem"),
-    )
-    _finalize_plotly(fig, bin_menu_traces=hist_indices, height=500)
-
-
 def plot_fluorescence_vs_volume(tracked):
     """Scatter total and mean fluorescence vs cell volume."""
 
@@ -1779,7 +1351,7 @@ def plot_fluorescence_vs_volume(tracked):
             name=y_label, showlegend=False,
             hovertemplate="V %{x:.0f}<br>F %{y:.0f}<extra></extra>",
         ), row=1, col=col)
-        fig.update_xaxes(title_text="Volume (px³)", row=1, col=col)
+        fig.update_xaxes(title_text="Volume (µm³)", row=1, col=col)
         fig.update_yaxes(title_text=y_label, row=1, col=col)
         if len(full) > 2:
             r = np.corrcoef(full["volume"], full[y_col])[0, 1]
@@ -1886,105 +1458,6 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
         f"{label} at frame {int(per_frame.index[-1])}: "
         f"{per_frame['mean'].iloc[-1]:.3f}"
     )
-
-
-def plot_fluorescence_disappearance(tracked, track_stats, threshold=-0.3):
-    """3-panel: drop distribution, disappearance timing, phase comparison."""
-
-    fig = make_subplots(
-        rows=1, cols=3,
-        subplot_titles=(
-            "Distribution of max fluorescence drops per track",
-            "Fluorescence disappearance per frame",
-            "Fluorescence vs. phase disappearance timing",
-        ),
-        horizontal_spacing=0.08,
-    )
-
-    all_drops = track_stats["max_drop"].dropna()
-    fig.add_trace(go.Histogram(
-        x=all_drops, nbinsx=40, marker_color="steelblue",
-        marker_line_color="white", marker_line_width=1,
-        name="Max drops", legendgroup="panel1",
-        hovertemplate="Drop %{x:.2f}<br>Count %{y}<extra></extra>",
-    ), row=1, col=1)
-    hist_idx = len(fig.data) - 1
-    fig.add_vline(
-        x=threshold, line=dict(color="red", dash="dash"),
-        annotation_text=f"Threshold: {threshold:.0%}",
-        annotation_position="top right",
-        row=1, col=1,
-    )
-
-    fd_frames = track_stats["fluor_disappearance_frame"].dropna()
-    if len(fd_frames) > 0:
-        fd_counts = fd_frames.value_counts().sort_index()
-        fd_counts = fd_counts.reindex(
-            range(int(tracked["frame"].max()) + 1), fill_value=0,
-        )
-        fig.add_trace(go.Bar(
-            x=list(fd_counts.index), y=list(fd_counts.values),
-            marker_color="darkorange", marker_line_color="white",
-            marker_line_width=1, name="Fluor drops", legendgroup="panel2",
-            hovertemplate="Frame %{x}<br>Count %{y}<extra></extra>",
-        ), row=1, col=2)
-        peak_fd = int(fd_counts.idxmax())
-        peak_val = int(fd_counts.max())
-        fig.add_annotation(
-            x=peak_fd, y=peak_val,
-            ax=peak_fd + 1.5, ay=peak_val + 1,
-            xref="x2", yref="y2", axref="x2", ayref="y2",
-            text=f"Peak: frame {peak_fd}",
-            showarrow=True, arrowhead=2, arrowcolor="red",
-            font=dict(color="red", size=12),
-        )
-
-    both = track_stats.dropna(subset=["fluor_disappearance_frame"])
-    both_dis = both[both["disappeared"]]
-    if len(both_dis) > 0:
-        fig.add_trace(go.Scatter(
-            x=both_dis["last_frame"], y=both_dis["fluor_disappearance_frame"],
-            mode="markers", marker=dict(color="tomato", size=6, opacity=0.5,
-                                        line=dict(width=0)),
-            name="Tracks", legendgroup="panel3",
-            hovertemplate="Phase %{x}<br>Fluor %{y}<extra></extra>",
-        ), row=1, col=3)
-        lim_max = int(tracked["frame"].max())
-        fig.add_trace(go.Scatter(
-            x=[0, lim_max], y=[0, lim_max],
-            mode="lines", line=dict(color="black", dash="dash", width=1),
-            opacity=0.3, name="Same frame", legendgroup="panel3",
-            hoverinfo="skip",
-        ), row=1, col=3)
-
-        before = (
-            both_dis["fluor_disappearance_frame"] < both_dis["last_frame"]
-        ).sum()
-        same = (
-            both_dis["fluor_disappearance_frame"] == both_dis["last_frame"]
-        ).sum()
-        after = (
-            both_dis["fluor_disappearance_frame"] > both_dis["last_frame"]
-        ).sum()
-        print("\nFor cells that disappeared from phase:")
-        print(f"  Fluor drop BEFORE phase disappearance: {before}")
-        print(f"  Fluor drop AT same frame: {same}")
-        print(f"  Fluor drop AFTER (shouldn't happen): {after}")
-
-    fig.update_xaxes(title_text="Largest single-frame relative change",
-                     row=1, col=1)
-    fig.update_yaxes(title_text="Count", row=1, col=1)
-    fig.update_xaxes(title_text="Frame", row=1, col=2,
-                     tickmode="array",
-                     tickvals=list(range(int(tracked["frame"].max()) + 1)))
-    fig.update_yaxes(title_text="Count", row=1, col=2)
-    fig.update_xaxes(title_text="Phase disappearance frame", row=1, col=3)
-    fig.update_yaxes(title_text="Fluorescence disappearance frame",
-                     row=1, col=3)
-    fig.update_layout(
-        showlegend=False,
-    )
-    _finalize_plotly(fig, bin_menu_traces=[hist_idx], height=500)
 
 
 def plot_initial_features_vs_lifespan(tracked, track_stats):
