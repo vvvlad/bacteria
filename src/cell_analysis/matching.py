@@ -123,7 +123,7 @@ def measure_fluorescence(
             # Measures how non-Gaussian the pixel distribution is
             # (Gough et al. 2014, PLOS ONE)
             if std_val > 0:
-                ks_stat, _ = stats.kstest(pixels, "norm", args=(mean_val, std_val))
+                ks_stat, _ = stats.kstest(pixels, stats.norm(mean_val, std_val).cdf)
                 nnrm = float(ks_stat)
             else:
                 nnrm = 0.0
