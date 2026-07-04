@@ -63,7 +63,8 @@ def match_cells_to_nuclei(
             cell_id_list = sorted(cell_ids)
 
             for nuc_id in unmatched_nucs:
-                nuc_centroid = np.array(ndimage.center_of_mass(nuclei == nuc_id)).reshape(1, -1)
+                nuc_centroid = np.array(ndimage.center_of_mass(
+                    nuclei == nuc_id)).reshape(1, -1)
                 dists = cdist(nuc_centroid, cell_centroids).flatten()
                 nearest_idx = np.argmin(dists)
                 matches.append({
@@ -123,7 +124,8 @@ def measure_fluorescence(
             # Measures how non-Gaussian the pixel distribution is
             # (Gough et al. 2014, PLOS ONE)
             if std_val > 0:
-                ks_stat, _ = stats.kstest(pixels, stats.norm(mean_val, std_val).cdf)
+                ks_stat, _ = stats.kstest(
+                    pixels, stats.norm(mean_val, std_val).cdf)
                 nnrm = float(ks_stat)
             else:
                 nnrm = 0.0
@@ -231,7 +233,8 @@ def compute_preburst_fluorescence(tracked, track_stats, n_frames=5):
         tid = row["track_id"]
         last_f = int(row["last_frame"])
         grp = grouped.get_group(tid).sort_values("frame")
-        window = grp[(grp["frame"] >= last_f - n_frames) & (grp["frame"] < last_f)]
+        window = grp[(grp["frame"] >= last_f - n_frames)
+                     & (grp["frame"] < last_f)]
         before = grp[grp["frame"] < last_f - n_frames]
 
         if len(window) < 2:
@@ -245,7 +248,8 @@ def compute_preburst_fluorescence(tracked, track_stats, n_frames=5):
         intensity = window["mean_intensity"].values.astype(np.float64)
         slope = np.polyfit(frames_arr, intensity, 1)[0]
 
-        baseline_mean = before["mean_intensity"].mean() if len(before) > 0 else intensity[0]
+        baseline_mean = before["mean_intensity"].mean() if len(
+            before) > 0 else intensity[0]
         has_spike = slope > 0 and float(intensity.max()) > baseline_mean
 
         records.append({
@@ -378,7 +382,8 @@ def predict_fate_from_frame0(tracked, track_stats, features=None):
     result_df["predicted_class"] = (probs >= 0.5).astype(bool)
 
     auc = roc_auc_score(y, probs)
-    accuracy = (result_df["predicted_class"] == result_df["disappeared"]).mean()
+    accuracy = (result_df["predicted_class"] ==
+                result_df["disappeared"]).mean()
 
     coefs = dict(zip(features, full_model.coef_[0]))
 
