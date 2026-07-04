@@ -24,6 +24,7 @@ dependencies = [
     "pyyaml",
     "nbconvert",
     "statsmodels>=0.14.6",
+    "jupyter>=1.1.1",
 ]
 
 [dependency-groups]
