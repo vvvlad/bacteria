@@ -22,18 +22,22 @@ def labels_to_detections(labels: np.ndarray) -> pd.DataFrame:
     for t in range(labels.shape[0]):
         frame_labels = labels[t]
         cell_ids = np.unique(frame_labels)
-        cell_ids = cell_ids[cell_ids != 0]  # skip background
+        cell_ids = cell_ids[cell_ids != 0]
+        if cell_ids.size == 0:
+            continue
 
-        for cell_id in cell_ids:
-            mask = frame_labels == cell_id
-            cy, cx = ndimage.center_of_mass(mask)
-            area = mask.sum()
+        centroids = ndimage.center_of_mass(
+            frame_labels, frame_labels, cell_ids,
+        )
+        areas = np.bincount(frame_labels.ravel())[cell_ids]
+
+        for cell_id, (cy, cx), area in zip(cell_ids, centroids, areas):
             records.append({
                 "frame": t,
                 "label": int(cell_id),
-                "centroid_y": cy,
-                "centroid_x": cx,
-                "area": area,
+                "centroid_y": float(cy),
+                "centroid_x": float(cx),
+                "area": int(area),
             })
 
     return pd.DataFrame(records)

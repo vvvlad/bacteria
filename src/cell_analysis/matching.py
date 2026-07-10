@@ -78,6 +78,76 @@ def match_cells_to_nuclei(
     return pd.DataFrame(matches)
 
 
+def _peri_core_asymmetry(pixels, coords, R):
+    """Signed peri/core asymmetry index for one cell.
+
+    Splits the mask coordinates into equal-area inner disk (r ≤ R/√2 from
+    the geometric centroid) and outer annulus, returns
+    (I_peri - I_core) / (I_peri + I_core). Returns np.nan if either ring
+    is empty or the two-ring intensity total is non-positive (a background-
+    subtracted-negative degenerate case).
+    """
+    cy, cx = coords.mean(axis=0)
+    dy = coords[:, 0] - cy
+    dx = coords[:, 1] - cx
+    core_pix = dy * dy + dx * dx <= 0.5 * R * R
+    n_core = int(core_pix.sum())
+    if n_core == 0 or n_core == core_pix.size:
+        return np.nan
+    m_core = float(pixels[core_pix].mean())
+    m_peri = float(pixels[~core_pix].mean())
+    total = m_core + m_peri
+    if total <= 0:
+        return np.nan
+    return (m_peri - m_core) / total
+
+
+def measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio):
+    """Per-cell nucleoid spatial-distribution metrics.
+
+    Returns a triple ``(edge_norm, sigma_norm, asym)``. Any element may be
+    np.nan if that specific metric could not be computed for this cell.
+
+    See :func:`cell_analysis.pipeline.add_nucleoid_distribution` for the
+    metric definitions and threshold rule.
+    """
+    R = np.sqrt(crop_mask.sum() / np.pi)
+    coords = np.argwhere(crop_mask)
+    asym = _peri_core_asymmetry(pixels, coords, R)
+
+    cell_mean = pixels.mean()
+    if pixels.max() / cell_mean < flat_threshold_ratio:
+        threshold = 0.5 * cell_mean
+    else:
+        threshold = cell_mean
+    keep = pixels > threshold
+    if not keep.any():
+        return np.nan, np.nan, asym
+
+    edt = ndimage.distance_transform_edt(crop_mask)
+    edt_vals = edt[crop_mask][keep]
+    edge_norm = edt_vals.mean() / (R / 3.0)
+
+    kept_coords = coords[keep]
+    weights = pixels[keep]
+    wsum = weights.sum()
+    if wsum <= 0:
+        return edge_norm, np.nan, asym
+    cy = (kept_coords[:, 0] * weights).sum() / wsum
+    cx = (kept_coords[:, 1] * weights).sum() / wsum
+    dy = kept_coords[:, 0] - cy
+    dx = kept_coords[:, 1] - cx
+    cov_yy = (weights * dy * dy).sum() / wsum
+    cov_xx = (weights * dx * dx).sum() / wsum
+    cov_yx = (weights * dy * dx).sum() / wsum
+    cov = np.array([[cov_yy, cov_yx], [cov_yx, cov_xx]])
+    eigvals = np.linalg.eigvalsh(cov)
+    sigma = float(np.sqrt(max(0.0, eigvals.mean())))
+    sigma_norm = sigma / R
+
+    return edge_norm, sigma_norm, asym
+
+
 def measure_fluorescence(
     fluor_stack: np.ndarray,
     cell_labels: np.ndarray,

@@ -222,7 +222,7 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
                               flat_threshold_ratio=1.5):
     """Compute per-cell-per-frame nucleoid spatial-distribution metrics.
 
-    Adds two columns to *tracked*:
+    Adds three columns to *tracked*:
 
       mean_edge_distance_norm
           Mean distance from suprathreshold pixels to the cell-mask edge,
@@ -233,19 +233,31 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
           σ of the 2D intensity-weighted spatial distribution of
           suprathreshold pixels, divided by R. σ = sqrt of the mean of
           eigenvalues of the weighted covariance matrix.
+      peri_core_asymmetry
+          Signed asymmetry index (I_peri - I_core) / (I_peri + I_core)
+          where I_core is the mean raw fluorescence inside the equal-area
+          inner disk (r ≤ R/√2 from the mask's geometric centroid) and
+          I_peri is the mean in the outer annulus (r > R/√2). Bounded in
+          [-1, 1]: positive = edge-clustered (expanded/donut), negative =
+          center-clustered (compacted), 0 = radially uniform. Uses raw
+          intensities (no thresholding).
 
-    Threshold rule: pixels with intensity > mean(cell). If the cell's
-    max/mean ratio < flat_threshold_ratio (distribution already flat),
-    fall back to intensity > 0.5 * mean.
+    Threshold rule (applies only to mean_edge_distance_norm and
+    gaussian_sigma_norm): pixels with intensity > mean(cell). If the
+    cell's max/mean ratio < flat_threshold_ratio (distribution already
+    flat), fall back to intensity > 0.5 * mean.
 
     Returns (tracked, track_stats) with the new per-cell columns in *tracked*
-    and per-track mean aggregates ``mean_edge_distance_norm`` and
-    ``mean_gaussian_sigma_norm`` in *track_stats*.
+    and per-track mean aggregates ``mean_edge_distance_norm``,
+    ``mean_gaussian_sigma_norm``, and ``mean_peri_core_asymmetry`` in
+    *track_stats*.
     """
-    from scipy.ndimage import distance_transform_edt, find_objects
+    from scipy.ndimage import find_objects
+    from .matching import measure_nucleoid_metrics
 
     edge_vals = np.full(len(tracked), np.nan)
     sigma_vals = np.full(len(tracked), np.nan)
+    asym_vals = np.full(len(tracked), np.nan)
     labels_arr = tracked["label"].to_numpy()
 
     by_frame = tracked.groupby("frame").indices
@@ -264,46 +276,20 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
             pixels = fluor_frame[sl][crop_mask].astype(np.float64)
             if pixels.size == 0 or pixels.mean() <= 0:
                 continue
-            cell_mean = pixels.mean()
-            if pixels.max() / cell_mean < flat_threshold_ratio:
-                threshold = 0.5 * cell_mean
-            else:
-                threshold = cell_mean
-            keep = pixels > threshold
-            if not keep.any():
-                continue
-
-            R = np.sqrt(crop_mask.sum() / np.pi)
-
-            edt = distance_transform_edt(crop_mask)
-            edt_vals = edt[crop_mask][keep]
-            edge_vals[row_idx] = edt_vals.mean() / (R / 3.0)
-
-            coords = np.argwhere(crop_mask)[keep]
-            weights = pixels[keep]
-            wsum = weights.sum()
-            if wsum <= 0:
-                continue
-            cy = (coords[:, 0] * weights).sum() / wsum
-            cx = (coords[:, 1] * weights).sum() / wsum
-            dy = coords[:, 0] - cy
-            dx = coords[:, 1] - cx
-            cov_yy = (weights * dy * dy).sum() / wsum
-            cov_xx = (weights * dx * dx).sum() / wsum
-            cov_yx = (weights * dy * dx).sum() / wsum
-            cov = np.array([[cov_yy, cov_yx], [cov_yx, cov_xx]])
-            eigvals = np.linalg.eigvalsh(cov)
-            sigma = float(np.sqrt(max(0.0, eigvals.mean())))
-            sigma_vals[row_idx] = sigma / R
+            edge_vals[row_idx], sigma_vals[row_idx], asym_vals[row_idx] = (
+                measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio)
+            )
 
     tracked = tracked.copy()
     tracked["mean_edge_distance_norm"] = edge_vals
     tracked["gaussian_sigma_norm"] = sigma_vals
+    tracked["peri_core_asymmetry"] = asym_vals
 
     track_stats = track_stats.merge(
         tracked.groupby("track_id").agg(
             mean_edge_distance_norm=("mean_edge_distance_norm", "mean"),
             mean_gaussian_sigma_norm=("gaussian_sigma_norm", "mean"),
+            mean_peri_core_asymmetry=("peri_core_asymmetry", "mean"),
         ),
         on="track_id", how="left",
     )

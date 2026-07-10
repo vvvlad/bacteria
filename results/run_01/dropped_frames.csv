@@ -1,0 +1,2 @@
+frame,cell_count,mean_area,iqr_area,z_count,z_area,z_iqr,flagged,reasons
+22,222,1336.9324324324325,502.75,-2.36075,1.1472439805249288,3.7696355140186917,True,iqr(z=3.8)

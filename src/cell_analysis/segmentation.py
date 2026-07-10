@@ -57,6 +57,7 @@ def detect_cells_frame(
     min_area: int = 200,
     min_circularity: float = 0.7,
     min_contrast: float = 1550,
+    min_bg_contrast: float = 0.0,
     exclude_edges: bool = True,
     gpu: bool = False,
     resample: bool = False,
@@ -79,8 +80,16 @@ def detect_cells_frame(
     min_circularity : float
         Reject non-round shapes (0-1, where 1.0 = perfect circle).
     min_contrast : float
-        Minimum intensity std-dev within the cell region. Rejects
-        out-of-focus / low-contrast cells in aggregates.
+        Minimum intra-mask intensity std-dev — a texture filter, NOT a
+        cell-vs-background contrast filter (name kept for backwards
+        compatibility). Rejects featureless/smooth false positives that
+        Cellpose sometimes returns on flat background regions.
+    min_bg_contrast : float
+        Minimum |cell_mean − background_median| — the actual cell-vs-
+        background contrast. Background median is computed from all
+        non-mask pixels in the frame. Default 0 = disabled. Set to a
+        positive value to reject cells whose mean intensity is too close
+        to the frame background (typical false-positive mode).
     exclude_edges : bool
         Reject cells whose bounding box touches the frame border.
     gpu : bool
@@ -116,6 +125,8 @@ def detect_cells_frame(
             masks, (h, w), order=0, preserve_range=True, anti_aliasing=False,
         ).astype(masks.dtype)
 
+    bg_median = float(np.median(frame[masks == 0])) if min_bg_contrast > 0 else 0.0
+
     props = measure.regionprops(masks, intensity_image=frame)
     good_centroids = []
     good_labels = set()
@@ -127,9 +138,14 @@ def detect_cells_frame(
                 continue
 
         circ = 4 * np.pi * p.area / (p.perimeter ** 2 + 1e-8)
-        contrast = float(frame[masks == p.label].std())
+        cell_pixels = frame[masks == p.label]
+        texture = float(cell_pixels.std())
+        bg_contrast = abs(float(cell_pixels.mean()) - bg_median)
 
-        if p.area >= min_area and circ >= min_circularity and contrast >= min_contrast:
+        if (p.area >= min_area
+                and circ >= min_circularity
+                and texture >= min_contrast
+                and bg_contrast >= min_bg_contrast):
             good_centroids.append(p.centroid)
             good_labels.add(p.label)
 
@@ -149,6 +165,7 @@ def detect_cells_stack(
     min_area: int = 200,
     min_circularity: float = 0.7,
     min_contrast: float = 1550,
+    min_bg_contrast: float = 0.0,
     exclude_edges: bool = True,
     gpu: bool = False,
     resample: bool = False,
@@ -162,7 +179,8 @@ def detect_cells_stack(
     ----------
     stack : np.ndarray
         Image stack with shape (T, Y, X).
-    diameter, min_area, min_circularity, min_contrast, exclude_edges, gpu, resample
+    diameter, min_area, min_circularity, min_contrast, min_bg_contrast,
+    exclude_edges, gpu, resample
         See detect_cells_frame.
 
     Returns
@@ -184,6 +202,7 @@ def detect_cells_stack(
             min_area=min_area,
             min_circularity=min_circularity,
             min_contrast=min_contrast,
+            min_bg_contrast=min_bg_contrast,
             exclude_edges=exclude_edges,
             gpu=gpu,
             resample=resample,
