@@ -344,21 +344,27 @@ Then create a config file (copy `configs/run_01.yaml` and update the paths and r
 
 ### Via CLI (recommended)
 
-Run an experiment by passing its YAML config to the runner script:
+The runner accepts one or more YAML configs. It executes the notebook once per config via papermill, then regenerates the `docs/index.html` landing page.
+
+**Single config:**
 
 ```bash
 uv run python scripts/run_experiment.py configs/run_01.yaml
 ```
 
-This executes the notebook via papermill, generates an HTML report with all plots, and saves CSV results to `results/<run_name>/`.
+**Multiple chained configs** (runs sequentially, in the order given):
 
-To re-run all experiments (e.g. after a pipeline update):
+```bash
+uv run python scripts/run_experiment.py configs/control_experiment.yaml configs/protein_synthesis_arrested.yaml
+```
+
+**All configs in `configs/`** (shell glob):
 
 ```bash
 uv run python scripts/run_experiment.py configs/*.yaml
 ```
 
-The script exits with code 0 if all runs succeed, or 1 if any fail.
+Each run writes to its own `results/<RUN_NAME>/` folder (HTML report, frozen `config.yaml`, and CSVs). When multiple configs are passed, the script prints a summary table at the end and exits with code 0 if all runs succeeded, or 1 if any failed. Failures do **not** stop the remaining runs — each config is attempted independently and a failed run leaves `report_failed.ipynb` alongside `report.html` for debugging.
 
 ### Via Jupyter (interactive)
 
