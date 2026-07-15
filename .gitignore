@@ -33,7 +33,7 @@ results/*/report.html
 results/*/report_failed.ipynb
 .tokensave
 .mcp.json
-.claude/settings.json.bak
-.claude/settings.local.json
+.claude/
 aisg-dev-tools
 graphify-out/
+CLAUDE.md
