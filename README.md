@@ -370,6 +370,22 @@ uv run jupyter lab notebooks/analysis.ipynb
 
 Edit the parameters cell at the top and run all cells. The notebook is also the template used by the CLI runner.
 
+### How the notebook and CLI runner relate
+
+The CLI runner is **not** a separate reimplementation of the pipeline — it executes the notebook itself:
+
+1. `run_experiment.py` reads `notebooks/analysis.ipynb`.
+2. Papermill injects the YAML config as parameters into the notebook's parameters cell.
+3. Every cell runs top-to-bottom into a temporary `.ipynb`.
+4. The executed notebook is rendered to `results/<RUN_NAME>/report.html`.
+
+Consequences:
+
+- **Any new executable cell you add to the notebook will run under the CLI**, and its output (plots, prints, tables) will appear in `report.html`.
+- **New config knobs must be registered.** If a new cell reads a value that should vary per run, add the key to the notebook's parameters cell **and** to `ALLOWED_KEYS` / `TYPE_RULES` in `scripts/run_experiment.py`. Otherwise the value is fixed to the notebook's default.
+- **Cell failures abort the run.** Papermill stops at the first exception; the partially-executed notebook is saved as `report_failed.ipynb` in the results folder and later cells are skipped.
+- **The notebook is the single source of truth** for analysis logic. The CLI is just a batch driver that parameterizes and captures it.
+
 ## Config Parameters
 
 All parameters are set in the YAML config file (or the notebook's parameters cell). See `configs/run_01.yaml` for a complete example.

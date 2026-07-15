@@ -235,12 +235,15 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
           eigenvalues of the weighted covariance matrix.
       peri_core_asymmetry
           Signed asymmetry index (I_peri - I_core) / (I_peri + I_core)
-          where I_core is the mean raw fluorescence inside the equal-area
-          inner disk (r ≤ R/√2 from the mask's geometric centroid) and
-          I_peri is the mean in the outer annulus (r > R/√2). Bounded in
-          [-1, 1]: positive = edge-clustered (expanded/donut), negative =
-          center-clustered (compacted), 0 = radially uniform. Uses raw
-          intensities (no thresholding).
+          where I_core is the mean raw fluorescence inside a narrow
+          inner disk (r < R/6 from the mask's geometric centroid) and
+          I_peri is the mean in a peripheral annulus (R/2 < r < 5R/6).
+          The intermediate band and the outer rim are ignored so the
+          two regions sample the diagnostic zones of donut / expanded /
+          compacted nucleoid profiles. Bounded in [-1, 1]: positive =
+          edge-clustered (expanded/donut), negative = center-clustered
+          (compacted), 0 = radially uniform. Uses raw intensities (no
+          thresholding).
 
     Threshold rule (applies only to mean_edge_distance_norm and
     gaussian_sigma_norm): pixels with intensity > mean(cell). If the

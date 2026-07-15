@@ -100,9 +100,14 @@ def test_peri_core_asymmetry_central_cluster_negative():
 
 
 def test_peri_core_asymmetry_peripheral_positive():
-    """Bright edge annulus, dim core ⇒ peri_core_asymmetry > 0."""
+    """Bright peripheral band, dim core ⇒ peri_core_asymmetry > 0.
+
+    Bright band placed inside R/2 < r < 5R/6 (=12.5..20.83 for R=25)
+    so it overlaps the peri ring under the narrow-disk / peripheral-
+    annulus definition.
+    """
     mask = _disk_mask(80, 40, 40, 25)
     fluor = mask * 10.0
-    fluor[mask & ~_disk_mask(80, 40, 40, 22)] = 100.0
+    fluor[mask & ~_disk_mask(80, 40, 40, 15)] = 100.0
     out_tracked, _ = _run_single_disk(fluor)
     assert out_tracked["peri_core_asymmetry"].iloc[0] > 0.3

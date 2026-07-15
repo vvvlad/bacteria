@@ -944,3 +944,14 @@ Item 11 of the reviewer feedback. Reviewer clarified the asymmetry came from man
 - [x] **Tests.** Added 3 tests to `tests/test_fate_prediction.py`: `test_summary_includes_per_class_metrics`, `test_confusion_matrix_totals_match_cohort`, `test_print_fate_comparison_uses_both_summaries`. Total: 56 → 59 tests, all passing.
 - [x] **Smoke test on `run_01`.** Full LR per-class recall reproduces the reviewer's 0.77 / 0.51 numbers (recall_survived = 151/195 = 0.774; recall_disappeared = 85/165 = 0.515 — off by one cell from the reviewer's 84/165 = 0.509, attributable to threshold ties or a slightly different cohort cut). No-area LR result: AUC 0.658 (vs 0.665 full), recall(survived) 0.800 (+2.6pp), recall(disappeared) 0.497 (−1.8pp). Mixed outcome — the heuristic correctly prints "differences small; full feature set remains the default" since neither F1 delta crosses the 0.02 threshold.
 - [x] **Reviewer's 12-item feedback list now fully implemented.** Pass A covered items 1–4 and 6–10; Pass B covered items 5 and 12; Pass C covered item 11. The per-class metrics + comparison surface the asymmetry the reviewer flagged in every future run, and the no-area variant is one Configuration-cell line swap away if a future dataset warrants it.
+
+
+### Peri/core asymmetry — narrower rings for real intensity profiles (2026-07-15)
+
+The original `peri_core_asymmetry` split the mask into equal-area rings at `r = R/√2` (≈ 0.707·R). On real cell intensity profiles (donut, expanded, compacted) the inner disk that wide swallows both donut peaks and the central dip together — the three functional states end up with similar (mildly-negative) values.
+
+- **New rings.** Narrow inner disk `r < R/6`, peripheral annulus `R/2 < r < 5R/6`. The intermediate band (R/6 ≤ r ≤ R/2) and the rim (r ≥ 5R/6) are ignored so the two regions sample the diagnostic zones of the profile. Areas are unequal; mean rather than total intensity is used (the code already averaged per ring, so only the ring definitions changed).
+- **Files.** `_peri_core_asymmetry` in `src/cell_analysis/matching.py`; docstring for `peri_core_asymmetry` in `src/cell_analysis/pipeline.py::add_nucleoid_distribution`; notebook §8.5c markdown.
+- **Tests.** `tests/test_nucleoid_distribution.py::test_peri_core_asymmetry_peripheral_positive` fixture updated: bright band moved from `r > 22` to `r > 15` so it overlaps the new peri ring (R/2..5R/6 = 12.5..20.83 for R=25). Uniform-is-zero and central-cluster-negative pass unchanged (the narrower core is almost entirely inside the r<4 bright disk, giving a stronger negative signal).
+- **Column name preserved.** `peri_core_asymmetry` / `mean_peri_core_asymmetry` — no downstream CSV or plot schema changes; values on a rerun will differ.
+- **Not changed.** Sign convention (positive = edge-clustered), NaN guards on empty rings and non-positive total, geometric-centroid basis, plot code in §8.5c.

@@ -81,21 +81,25 @@ def match_cells_to_nuclei(
 def _peri_core_asymmetry(pixels, coords, R):
     """Signed peri/core asymmetry index for one cell.
 
-    Splits the mask coordinates into equal-area inner disk (r ≤ R/√2 from
-    the geometric centroid) and outer annulus, returns
-    (I_peri - I_core) / (I_peri + I_core). Returns np.nan if either ring
-    is empty or the two-ring intensity total is non-positive (a background-
-    subtracted-negative degenerate case).
+    Uses a narrow inner disk (r < R/6) and a peripheral annulus
+    (R/2 < r < 5R/6) around the mask's geometric centroid, and returns
+    (mean_peri - mean_core) / (mean_peri + mean_core). The intermediate
+    band (R/6 <= r <= R/2) and the rim (r >= 5R/6) are ignored so the
+    two regions sample the diagnostic zones of donut / expanded /
+    compacted nucleoid profiles. Areas are unequal, so mean rather than
+    total intensity is used. Returns np.nan if either ring is empty or
+    the summed mean intensity is non-positive.
     """
     cy, cx = coords.mean(axis=0)
     dy = coords[:, 0] - cy
     dx = coords[:, 1] - cx
-    core_pix = dy * dy + dx * dx <= 0.5 * R * R
-    n_core = int(core_pix.sum())
-    if n_core == 0 or n_core == core_pix.size:
+    r2 = dy * dy + dx * dx
+    core_pix = r2 < (R / 6.0) ** 2
+    peri_pix = (r2 > (R / 2.0) ** 2) & (r2 < (5.0 * R / 6.0) ** 2)
+    if not core_pix.any() or not peri_pix.any():
         return np.nan
     m_core = float(pixels[core_pix].mean())
-    m_peri = float(pixels[~core_pix].mean())
+    m_peri = float(pixels[peri_pix].mean())
     total = m_core + m_peri
     if total <= 0:
         return np.nan

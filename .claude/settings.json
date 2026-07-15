@@ -1,46 +1,4 @@
 {
-  "hooks": {
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/vvetshte/.local/bin/tokensave",
-            "args": [
-              "hook-pre-tool-use"
-            ]
-          }
-        ],
-        "matcher": "Agent|Grep|Bash"
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/vvetshte/.local/bin/tokensave",
-            "args": [
-              "hook-prompt-submit"
-            ]
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/Users/vvetshte/.local/bin/tokensave",
-            "args": [
-              "hook-stop"
-            ]
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
       "mcp__tokensave__tokensave_affected",
