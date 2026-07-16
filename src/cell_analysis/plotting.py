@@ -27,6 +27,7 @@ PLOT_SOURCES: dict[str, list[str]] = {
     "plot_fluorescence_per_frame": ["tracked_cells.csv"],
     "plot_relative_fluorescence": ["tracked_cells.csv"],
     "plot_fluorescence_alignment": ["fluorescence_alignment.csv"],
+    "plot_peri_core_alignment": ["peri_core_alignment.csv"],
     "plot_fluorescence_vs_volume": ["tracked_cells.csv"],
     "plot_metric_dynamics": ["tracked_cells.csv", "track_statistics.csv"],
     "plot_fluorescence_concentration": ["tracked_cells.csv"],
@@ -872,6 +873,117 @@ def plot_fluorescence_alignment(alignment_df):
     print(f"Aligned {n} disappeared tracks (window=+/-{window})")
     for off in sorted(medians.index):
         print(f"  offset {int(off):+d}: median F_norm = {medians.loc[off]:.3f}")
+
+
+def plot_peri_core_alignment(alignment_df, track_stats=None):
+    """Plot peri/core asymmetry aligned to phase disappearance.
+
+    Two-panel figure:
+      - Left: per-cell asymmetry trajectories (low-alpha lines) + population
+        median + IQR band. Offset 0 = last-detected frame. Optionally
+        split by fate group when *track_stats* is passed (uses
+        ``fluor_disappearance_mode`` if present, else all disappeared
+        are one group).
+      - Right: frame-baseline (offset=-window) vs. offset=0 scatter,
+        one point per cell. Reveals whether donut/sparse initial states
+        converge to a common pre-burst state.
+    """
+    if alignment_df.empty:
+        print("No disappeared cells to align.")
+        return
+
+    fig = make_subplots(
+        rows=1, cols=2, horizontal_spacing=0.12,
+        subplot_titles=(
+            "Per-cell trajectory aligned to last frame",
+            "Baseline vs. pre-burst asymmetry (per cell)",
+        ),
+    )
+
+    for _, grp in alignment_df.groupby("track_id"):
+        grp = grp.sort_values("offset")
+        fig.add_trace(go.Scatter(
+            x=grp["offset"], y=grp["peri_core_asymmetry"], mode="lines",
+            line=dict(color="rgba(70,130,180,0.12)", width=1),
+            showlegend=False, hoverinfo="skip",
+        ), row=1, col=1)
+
+    pop = (alignment_df.dropna(subset=["peri_core_asymmetry"])
+           .groupby("offset")["peri_core_asymmetry"]
+           .agg(["median",
+                 lambda x: x.quantile(0.25),
+                 lambda x: x.quantile(0.75),
+                 "count"])
+           .rename(columns={"<lambda_0>": "q25", "<lambda_1>": "q75"})
+           .reset_index())
+
+    fig.add_trace(go.Scatter(
+        x=list(pop["offset"]) + list(pop["offset"])[::-1],
+        y=list(pop["q75"]) + list(pop["q25"])[::-1],
+        fill="toself", fillcolor="rgba(180,80,60,0.20)",
+        line=dict(color="rgba(0,0,0,0)"), name="IQR (25–75%)",
+        legendgroup="pop", showlegend=True,
+    ), row=1, col=1)
+    fig.add_trace(go.Scatter(
+        x=pop["offset"], y=pop["median"], mode="lines+markers",
+        line=dict(color="rgb(180,80,60)", width=2.5),
+        marker=dict(size=7), name="Median", legendgroup="pop",
+    ), row=1, col=1)
+
+    fig.add_vline(
+        x=0, line=dict(color="red", dash="dash"),
+        annotation_text="phase mask vanishes",
+        annotation_position="top right",
+        row=1, col=1,
+    )
+
+    window = int(alignment_df["offset"].abs().max())
+    per_track = (alignment_df.pivot(index="track_id", columns="offset",
+                                    values="peri_core_asymmetry"))
+    if -window in per_track.columns and 0 in per_track.columns:
+        base = per_track[-window]
+        last = per_track[0]
+        finite = base.notna() & last.notna()
+        base = base[finite]
+        last = last[finite]
+        fig.add_trace(go.Scatter(
+            x=base, y=last, mode="markers",
+            marker=dict(size=6, color="rgba(70,130,180,0.55)"),
+            name=f"cells (n={len(base)})",
+        ), row=1, col=2)
+        lo = min(base.min(), last.min())
+        hi = max(base.max(), last.max())
+        fig.add_trace(go.Scatter(
+            x=[lo, hi], y=[lo, hi], mode="lines",
+            line=dict(color="gray", dash="dot", width=1),
+            showlegend=False, hoverinfo="skip",
+        ), row=1, col=2)
+        fig.update_xaxes(
+            title_text=f"Asymmetry at offset -{window} (baseline)",
+            row=1, col=2,
+        )
+        fig.update_yaxes(
+            title_text="Asymmetry at offset 0 (last frame)",
+            row=1, col=2,
+        )
+
+    fig.update_xaxes(
+        title_text="Offset (frames relative to last detection)",
+        row=1, col=1,
+    )
+    fig.update_yaxes(title_text="peri_core_asymmetry", row=1, col=1)
+    fig.update_layout(
+        title="Peri/core asymmetry aligned to phase disappearance",
+    )
+    _finalize_plotly(fig, height=520)
+
+    n = alignment_df["track_id"].nunique()
+    medians = (alignment_df.dropna(subset=["peri_core_asymmetry"])
+               .groupby("offset")["peri_core_asymmetry"].median())
+    print(f"Aligned {n} disappeared tracks (window=-{window}..0)")
+    for off in sorted(medians.index):
+        print(f"  offset {int(off):+d}: median asymmetry = {medians.loc[off]:+.3f}")
+
 
 
 def plot_nucleus_persistence(comparison_df):

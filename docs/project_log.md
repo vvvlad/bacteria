@@ -994,3 +994,45 @@ inspection.
   under the new default. Suite: 62 → 63 tests, all passing.
 - **Not yet.** Rerun of the 3 configs to regenerate CSVs + reports with new
   values.
+
+
+### Peri/core asymmetry — alignment to disappearance (§8.5d) (2026-07-16)
+
+Absolute-frame medians smear the signal: cells caught at frame N are at
+different stages of their own life cycle, so averaging across them mixes
+donut-stage and pre-burst-stage cells. Added a per-cell alignment view
+analogous to §8.6 fluorescence alignment, but for `peri_core_asymmetry`.
+
+- **New function.** `pipeline.add_peri_core_alignment(tracked, track_stats,
+  window)` returns long-form DataFrame with `track_id, offset, peri_core_asymmetry,
+  delta_from_baseline` for each disappeared cell, where offset =
+  `frame - last_frame` ∈ [−window, 0]. Skips tracks whose offset=-window
+  observation is missing (short lifespan, no baseline).
+- **Plot.** `plotting.plot_peri_core_alignment` — two-panel: (a) per-cell
+  trajectories with median + IQR band, offset 0 marked; (b) baseline
+  (offset −window) vs. last-frame (offset 0) scatter, one dot per cell,
+  diagonal reference. Reveals convergence/divergence of initial phenotypes.
+- **Notebook.** New §8.5d cell after §8.5c; `PLOT_SOURCES` registry updated
+  (`peri_core_alignment.csv`); §9 CSV registry row added; imports cell
+  brings in `add_peri_core_alignment` / `plot_peri_core_alignment`.
+- **Tests.** New `tests/test_peri_core_alignment.py` (3 tests): only
+  disappeared tracks with baseline appear, offset grid + delta correctness,
+  empty-when-no-disappeared. Suite: 63 → 66 tests, all passing.
+- **CSV.** `peri_core_alignment.csv` shipped per-run.
+- **Reruns.** All 3 configs regenerated with the new §8.5d panel.
+
+Per-cell aligned trajectory (median across all disappeared tracks with
+`window=3` baseline):
+
+| condition                    | n   | offset −3 | offset −2 | offset −1 | offset 0 | net Δ |
+|------------------------------|-----|-----------|-----------|-----------|----------|-------|
+| control_experiment           | 196 | −0.064    | −0.066    | −0.072    | −0.069   | −0.009 |
+| protein_synthesis_arrested   | 282 | −0.142    | −0.141    | −0.131    | −0.108   | **+0.032** |
+| run_01                       | 166 | −0.077    | −0.076    | −0.077    | −0.071   | +0.005 |
+
+CAM shows a clear per-cell "compact → sparse before blow" trajectory of
++0.032 in the last 3 frames — a signal that was drowned by absolute-frame
+averaging in §8.5c. Control is flat on average, but 20 → 8 baseline-positive
+donut cells convert away from donut before disappearance (10% → 4%),
+showing a real subpopulation transformation despite the overall median
+being stable.

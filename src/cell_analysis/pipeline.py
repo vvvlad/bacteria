@@ -392,6 +392,56 @@ def add_fluorescence_alignment(tracked, track_stats, fluor_stack, label_stack,
     ]
 
 
+def add_peri_core_alignment(tracked, track_stats, window=3):
+    """Long-form DataFrame of peri/core asymmetry aligned to disappearance.
+
+    For each disappeared track, extracts ``peri_core_asymmetry`` at offsets
+    in ``[-window, 0]`` where offset = frame - last_frame. Returns columns:
+
+    - ``track_id``
+    - ``offset``  (integer, negative = before last detection, 0 = last)
+    - ``peri_core_asymmetry``
+    - ``delta_from_baseline`` — asymmetry(offset) − asymmetry(-window)
+
+    Survived tracks are excluded. Tracks whose offset=-window observation
+    is missing (short lifespan) are dropped — no baseline to compare
+    against. Asymmetry cannot be measured post-disappearance because the
+    metric needs a well-defined mask; use §8.6 fluorescence alignment for
+    the post-burst window.
+    """
+    disappeared = track_stats[track_stats["disappeared"]][
+        ["track_id", "last_frame"]
+    ]
+    if disappeared.empty:
+        return pd.DataFrame(columns=[
+            "track_id", "offset", "peri_core_asymmetry", "delta_from_baseline",
+        ])
+
+    merged = tracked.merge(disappeared, on="track_id")
+    merged["offset"] = merged["frame"] - merged["last_frame"]
+    merged = merged[(merged["offset"] >= -window) & (merged["offset"] <= 0)]
+    merged = merged[["track_id", "offset", "peri_core_asymmetry"]]
+
+    out = []
+    for tid, grp in merged.groupby("track_id"):
+        grp = grp.set_index("offset").reindex(range(-window, 1))
+        if pd.isna(grp.loc[-window, "peri_core_asymmetry"]):
+            continue
+        baseline = grp.loc[-window, "peri_core_asymmetry"]
+        grp["delta_from_baseline"] = grp["peri_core_asymmetry"] - baseline
+        grp["track_id"] = tid
+        out.append(grp.reset_index())
+
+    if not out:
+        return pd.DataFrame(columns=[
+            "track_id", "offset", "peri_core_asymmetry", "delta_from_baseline",
+        ])
+    return pd.concat(out, ignore_index=True)[[
+        "track_id", "offset", "peri_core_asymmetry", "delta_from_baseline",
+    ]]
+
+
+
 def add_sav_ratio(tracked):
     """Add surface-area-to-volume ratio column.
 
