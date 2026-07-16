@@ -955,3 +955,42 @@ The original `peri_core_asymmetry` split the mask into equal-area rings at `r = 
 - **Tests.** `tests/test_nucleoid_distribution.py::test_peri_core_asymmetry_peripheral_positive` fixture updated: bright band moved from `r > 22` to `r > 15` so it overlaps the new peri ring (R/2..5R/6 = 12.5..20.83 for R=25). Uniform-is-zero and central-cluster-negative pass unchanged (the narrower core is almost entirely inside the r<4 bright disk, giving a stronger negative signal).
 - **Column name preserved.** `peri_core_asymmetry` / `mean_peri_core_asymmetry` — no downstream CSV or plot schema changes; values on a rerun will differ.
 - **Not changed.** Sign convention (positive = edge-clustered), NaN guards on empty rings and non-positive total, geometric-centroid basis, plot code in §8.5c.
+
+
+### Peri/core asymmetry — parametrized + retuned to bracket donut peak (2026-07-16)
+
+The `(0.167, 0.5, 0.833)` rings from 2026-07-15 still put the peri annulus on the
+descending shoulder of the average radial profile, not on the donut peak. On the
+shipped 3-run dataset only 0.9% of control cell-frames registered positive
+asymmetry despite ~13% of tracks showing donut morphology in per-cell profile
+inspection.
+
+- **Data-driven retune.** Per-cell radial fluorescence profiles (extracted via
+  centroid + `radius` from `tracked_cells.csv`, so no re-segmentation was needed)
+  showed donut cells have a center dip at r/R < 0.2 and a peak at r/R ≈ 0.5. A
+  sweep over 25 (core_max, peri_min, peri_max) triples identified
+  `(0.15, 0.35, 0.55)` as the best balance: control positive fraction goes 0.9%
+  → 11.4%, control median asymmetry goes −0.22 → −0.06, CAM stays clearly
+  compacted (−0.18) and still shifts ~2× toward zero over time (−0.18 → −0.09).
+- **Parametrized.** `_peri_core_asymmetry` now takes a
+  `rings=(core_max, peri_min, peri_max)` triple; `measure_nucleoid_metrics` and
+  `add_nucleoid_distribution` accept `peri_core_rings=`; notebook Configuration
+  cell exposes `PERI_CORE_RINGS = (0.15, 0.35, 0.55)`; `scripts/run_experiment.py`
+  `ALLOWED_KEYS` + `TYPE_RULES` accept `PERI_CORE_RINGS` in the YAML configs.
+  Switching back to the historical rings is a single-line config change.
+- **Documented.** [`docs/peri_core_asymmetry_definition_history.md`](peri_core_asymmetry_definition_history.md)
+  records both prior definitions (equal-area and narrow-disk/wide-annulus), the
+  sweep behind the new default, and one-line restore recipes.
+- **Column name preserved.** `peri_core_asymmetry` / `mean_peri_core_asymmetry`
+  keep their names; a rerun will overwrite the CSVs with the new values. Users
+  who want the wide/narrow score alongside the new default can call
+  `add_nucleoid_distribution(..., peri_core_rings=(0.167, 0.5, 0.833))` and rename
+  the returned column.
+- **Tests.** `test_peri_core_asymmetry_peripheral_positive` fixture adapted to
+  new peri ring (bright band at r > 8 for R=25). New
+  `test_peri_core_asymmetry_respects_ring_parameter` verifies the kwarg is
+  actually plumbed through — using historical rings on a fixture where only the
+  outer annulus is bright reproduces a strongly positive value that goes to 0
+  under the new default. Suite: 62 → 63 tests, all passing.
+- **Not yet.** Rerun of the 3 configs to regenerate CSVs + reports with new
+  values.

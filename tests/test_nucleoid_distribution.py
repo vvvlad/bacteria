@@ -102,12 +102,40 @@ def test_peri_core_asymmetry_central_cluster_negative():
 def test_peri_core_asymmetry_peripheral_positive():
     """Bright peripheral band, dim core ⇒ peri_core_asymmetry > 0.
 
-    Bright band placed inside R/2 < r < 5R/6 (=12.5..20.83 for R=25)
-    so it overlaps the peri ring under the narrow-disk / peripheral-
-    annulus definition.
+    Bright band overlaps the default peri ring (0.35 R < r < 0.55 R,
+    i.e. 8.75 < r < 13.75 for R=25).
     """
     mask = _disk_mask(80, 40, 40, 25)
     fluor = mask * 10.0
-    fluor[mask & ~_disk_mask(80, 40, 40, 15)] = 100.0
+    fluor[mask & ~_disk_mask(80, 40, 40, 8)] = 100.0
     out_tracked, _ = _run_single_disk(fluor)
     assert out_tracked["peri_core_asymmetry"].iloc[0] > 0.3
+
+
+def test_peri_core_asymmetry_respects_ring_parameter():
+    """Passing custom rings changes the metric — smoke test for the plumbing.
+
+    Bright annulus at 18 < r < 24 (outside default peri ring, inside the
+    old (0.5, 5/6) ring). Default rings → ~0; historical rings → strongly
+    positive.
+    """
+    mask = _disk_mask(80, 40, 40, 25)
+    fluor = mask * 10.0
+    fluor[_disk_mask(80, 40, 40, 24) & ~_disk_mask(80, 40, 40, 18)] = 100.0
+    label_stack = np.zeros((1, 80, 80), dtype=np.int32)
+    label_stack[0][mask] = 1
+    fluor_stack = fluor[None, :, :].astype(np.float32)
+    tracked = pd.DataFrame({
+        "track_id": [1], "frame": [0], "label": [1],
+        "area": [int(mask.sum())],
+    })
+    ts = pd.DataFrame({"track_id": [1]})
+    default_out, _ = add_nucleoid_distribution(
+        tracked.copy(), ts.copy(), fluor_stack, label_stack,
+    )
+    old_out, _ = add_nucleoid_distribution(
+        tracked.copy(), ts.copy(), fluor_stack, label_stack,
+        peri_core_rings=(0.167, 0.5, 0.833),
+    )
+    assert abs(default_out["peri_core_asymmetry"].iloc[0]) < 0.05
+    assert old_out["peri_core_asymmetry"].iloc[0] > 0.3

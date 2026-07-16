@@ -219,7 +219,8 @@ def add_fluorescence(tracked, track_stats, fluor_stack, label_stack):
 
 
 def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
-                              flat_threshold_ratio=1.5):
+                              flat_threshold_ratio=1.5,
+                              peri_core_rings=None):
     """Compute per-cell-per-frame nucleoid spatial-distribution metrics.
 
     Adds three columns to *tracked*:
@@ -235,15 +236,18 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
           eigenvalues of the weighted covariance matrix.
       peri_core_asymmetry
           Signed asymmetry index (I_peri - I_core) / (I_peri + I_core)
-          where I_core is the mean raw fluorescence inside a narrow
-          inner disk (r < R/6 from the mask's geometric centroid) and
-          I_peri is the mean in a peripheral annulus (R/2 < r < 5R/6).
-          The intermediate band and the outer rim are ignored so the
-          two regions sample the diagnostic zones of donut / expanded /
-          compacted nucleoid profiles. Bounded in [-1, 1]: positive =
-          edge-clustered (expanded/donut), negative = center-clustered
-          (compacted), 0 = radially uniform. Uses raw intensities (no
-          thresholding).
+          where I_core is the mean raw fluorescence inside an inner disk
+          and I_peri is the mean in a peripheral annulus, both defined by
+          *peri_core_rings*: a triple (core_max, peri_min, peri_max) of
+          fractions of R that give the boundaries. Default is
+          ``(0.15, 0.35, 0.55)`` — narrow core sampling the donut center
+          dip, peri bracketed to the donut peak zone identified from real
+          radial profiles (see
+          ``docs/peri_core_asymmetry_definition_history.md``). Areas are
+          unequal, so mean rather than total intensity is used. Bounded in
+          [-1, 1]: positive = edge-clustered (expanded/donut), negative =
+          center-clustered (compacted), 0 = radially uniform. Uses raw
+          intensities (no thresholding).
 
     Threshold rule (applies only to mean_edge_distance_norm and
     gaussian_sigma_norm): pixels with intensity > mean(cell). If the
@@ -256,7 +260,10 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
     *track_stats*.
     """
     from scipy.ndimage import find_objects
-    from .matching import measure_nucleoid_metrics
+    from .matching import (measure_nucleoid_metrics, PERI_CORE_RINGS_DEFAULT)
+
+    if peri_core_rings is None:
+        peri_core_rings = PERI_CORE_RINGS_DEFAULT
 
     edge_vals = np.full(len(tracked), np.nan)
     sigma_vals = np.full(len(tracked), np.nan)
@@ -280,7 +287,8 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
             if pixels.size == 0 or pixels.mean() <= 0:
                 continue
             edge_vals[row_idx], sigma_vals[row_idx], asym_vals[row_idx] = (
-                measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio)
+                measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio,
+                                         peri_core_rings=peri_core_rings)
             )
 
     tracked = tracked.copy()

@@ -78,24 +78,32 @@ def match_cells_to_nuclei(
     return pd.DataFrame(matches)
 
 
-def _peri_core_asymmetry(pixels, coords, R):
+PERI_CORE_RINGS_DEFAULT = (0.15, 0.35, 0.55)
+
+
+def _peri_core_asymmetry(pixels, coords, R, rings=PERI_CORE_RINGS_DEFAULT):
     """Signed peri/core asymmetry index for one cell.
 
-    Uses a narrow inner disk (r < R/6) and a peripheral annulus
-    (R/2 < r < 5R/6) around the mask's geometric centroid, and returns
-    (mean_peri - mean_core) / (mean_peri + mean_core). The intermediate
-    band (R/6 <= r <= R/2) and the rim (r >= 5R/6) are ignored so the
-    two regions sample the diagnostic zones of donut / expanded /
-    compacted nucleoid profiles. Areas are unequal, so mean rather than
-    total intensity is used. Returns np.nan if either ring is empty or
-    the summed mean intensity is non-positive.
+    *rings* is a triple ``(core_max, peri_min, peri_max)`` giving the ring
+    boundaries as fractions of R (the mask's equivalent radius). Defaults
+    to ``(0.15, 0.35, 0.55)`` — narrow inner disk and a peripheral annulus
+    bracketed to the donut-peak zone identified from control-cell radial
+    profiles. See ``docs/peri_core_asymmetry_definition_history.md`` for
+    prior parameter sets and the sweep that motivated the current default.
+
+    Returns ``(mean_peri - mean_core) / (mean_peri + mean_core)``. The
+    intermediate band (core_max <= r/R <= peri_min) and the rim
+    (r/R >= peri_max) are ignored. Areas are unequal, so mean rather than
+    total intensity is used. Returns np.nan if either ring is empty or the
+    summed mean intensity is non-positive.
     """
+    core_max, peri_min, peri_max = rings
     cy, cx = coords.mean(axis=0)
     dy = coords[:, 0] - cy
     dx = coords[:, 1] - cx
     r2 = dy * dy + dx * dx
-    core_pix = r2 < (R / 6.0) ** 2
-    peri_pix = (r2 > (R / 2.0) ** 2) & (r2 < (5.0 * R / 6.0) ** 2)
+    core_pix = r2 < (core_max * R) ** 2
+    peri_pix = (r2 > (peri_min * R) ** 2) & (r2 < (peri_max * R) ** 2)
     if not core_pix.any() or not peri_pix.any():
         return np.nan
     m_core = float(pixels[core_pix].mean())
@@ -106,7 +114,8 @@ def _peri_core_asymmetry(pixels, coords, R):
     return (m_peri - m_core) / total
 
 
-def measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio):
+def measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio,
+                             peri_core_rings=PERI_CORE_RINGS_DEFAULT):
     """Per-cell nucleoid spatial-distribution metrics.
 
     Returns a triple ``(edge_norm, sigma_norm, asym)``. Any element may be
@@ -117,7 +126,7 @@ def measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio):
     """
     R = np.sqrt(crop_mask.sum() / np.pi)
     coords = np.argwhere(crop_mask)
-    asym = _peri_core_asymmetry(pixels, coords, R)
+    asym = _peri_core_asymmetry(pixels, coords, R, rings=peri_core_rings)
 
     cell_mean = pixels.mean()
     if pixels.max() / cell_mean < flat_threshold_ratio:
