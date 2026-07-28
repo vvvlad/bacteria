@@ -44,7 +44,7 @@ def test_extract_hash_changes_on_param(stacks):
     assert p1["extract_hash"] != p2["extract_hash"]
 
 
-def test_extract_hash_changes_on_stack_bytes(stacks, tmp_path):
+def test_extract_hash_changes_on_stack_bytes(stacks):
     a, b = stacks
     p1 = compute_provenance(PARAMS, a, b)
     a.write_bytes(b"phase-bytes-different")
@@ -71,13 +71,17 @@ def test_repo_relative_paths(stacks, tmp_path):
     assert prov["fluor_path"] == "b.tif"
 
 
-def test_absolute_paths_when_outside_repo(stacks, tmp_path):
+def test_absolute_paths_when_outside_repo(stacks):
+    """Test that files outside repo_root return absolute paths."""
+    import tempfile
     a, b = stacks
-    other = tmp_path.parent
-    prov = compute_provenance(PARAMS, a, b, repo_root=other)
-    assert Path(prov["stack_path"]).is_absolute()
-
-
+    # Use a completely different temp directory as repo_root
+    with tempfile.TemporaryDirectory() as other_dir:
+        other = Path(other_dir)
+        prov = compute_provenance(PARAMS, a, b, repo_root=other)
+        # Files are NOT under other, so should be absolute
+        assert Path(prov["stack_path"]).is_absolute()
+        assert Path(prov["fluor_path"]).is_absolute()
 def test_provenance_matches_true(stacks):
     a, b = stacks
     prov = compute_provenance(PARAMS, a, b)
@@ -103,3 +107,15 @@ def test_provenance_matches_flags_param_drift(stacks):
     ok, drift = provenance_matches(p1, p2)
     assert ok is False
     assert any("GATING_Z_THRESHOLD" in f for f in drift)
+
+
+def test_repo_relative_paths_in_subdirectory(tmp_path):
+    subdir = tmp_path / "data" / "Control-experiment"
+    subdir.mkdir(parents=True)
+    a = subdir / "phase.tif"
+    b = subdir / "fluor.tif"
+    a.write_bytes(b"phase")
+    b.write_bytes(b"fluor")
+    prov = compute_provenance(PARAMS, a, b, repo_root=tmp_path)
+    assert prov["stack_path"] == "data/Control-experiment/phase.tif"
+    assert prov["fluor_path"] == "data/Control-experiment/fluor.tif"

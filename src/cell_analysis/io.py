@@ -123,14 +123,10 @@ def _canonical_path(path: str | Path, repo_root: Path | None) -> str:
     p = Path(path).resolve()
     if repo_root is None:
         return str(p)
-    repo_root_resolved = Path(repo_root).resolve()
-    # Only return relative path if repo_root is the direct parent
-    # Otherwise, always return absolute (path is outside or too nested)
-    p_parent = p.parent
-    if p_parent == repo_root_resolved:
-        return str(p.name)
-    # If repo_root is not the direct parent, return absolute
-    return str(p)
+    try:
+        return str(p.relative_to(Path(repo_root).resolve()))
+    except ValueError:
+        return str(p)
 
 
 def compute_provenance(
