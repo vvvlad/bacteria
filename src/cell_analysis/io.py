@@ -2,11 +2,17 @@
 
 import hashlib
 import json
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 import tifffile
+
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 
 def load_stack(path: str | Path) -> np.ndarray:
@@ -188,3 +194,75 @@ def provenance_matches(existing: dict, candidate: dict) -> tuple[bool, list[str]
         if p_old.get(key) != p_new.get(key):
             drift.append(f"params.{key}")
     return False, drift
+
+
+@dataclass
+class ExtractionBundle:
+    tracked: "pd.DataFrame"
+    track_stats: "pd.DataFrame"
+    label_stack: np.ndarray
+    nucleus_label_stack: np.ndarray
+    diagnostics: "pd.DataFrame"
+    merge_log: "pd.DataFrame"
+    dropped_frames: "pd.DataFrame"
+    provenance: dict
+
+
+def save_extraction(
+    results_dir: str | Path, *,
+    label_stack: np.ndarray,
+    nucleus_label_stack: np.ndarray,
+    tracked, track_stats,
+    diagnostics, merge_log, dropped_frames,
+    provenance: dict,
+) -> None:
+    """Persist a full extraction bundle to ``results_dir``."""
+
+    results_dir = Path(results_dir)
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    (results_dir / "provenance.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True), encoding="utf-8")
+
+    np.savez_compressed(results_dir / "label_stack.npz",
+                        label_stack=label_stack.astype(np.int32))
+    np.savez_compressed(results_dir / "nucleus_label_stack.npz",
+                        nucleus_label_stack=nucleus_label_stack.astype(np.int32))
+
+    for df, name in (
+        (tracked, "tracked_cells.csv"),
+        (track_stats, "track_statistics.csv"),
+        (diagnostics, "frame_diagnostics.csv"),
+        (merge_log, "merge_log.csv"),
+        (dropped_frames, "dropped_frames.csv"),
+    ):
+        df.to_csv(results_dir / name, index=False)
+
+
+def load_extraction(results_root: str | Path, run_name: str) -> ExtractionBundle:
+    """Load a previously saved extraction bundle."""
+    import pandas as pd
+
+    extraction_dir = Path(results_root) / run_name / "extraction"
+    prov_path = extraction_dir / "provenance.json"
+    if not prov_path.exists():
+        raise FileNotFoundError(f"No provenance at {prov_path}")
+
+    provenance = json.loads(prov_path.read_text(encoding="utf-8"))
+    label_stack = np.load(extraction_dir / "label_stack.npz")["label_stack"]
+    nucleus_label_stack = np.load(
+        extraction_dir / "nucleus_label_stack.npz")["nucleus_label_stack"]
+
+    def _read(name):
+        return pd.read_csv(extraction_dir / name)
+
+    return ExtractionBundle(
+        tracked=_read("tracked_cells.csv"),
+        track_stats=_read("track_statistics.csv"),
+        label_stack=label_stack,
+        nucleus_label_stack=nucleus_label_stack,
+        diagnostics=_read("frame_diagnostics.csv"),
+        merge_log=_read("merge_log.csv"),
+        dropped_frames=_read("dropped_frames.csv"),
+        provenance=provenance,
+    )

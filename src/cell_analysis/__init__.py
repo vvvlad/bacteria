@@ -31,6 +31,11 @@ from .io import (
     save_results as save_results,
     save_summary as save_summary,
     export_notebook_html as export_notebook_html,
+    ExtractionBundle as ExtractionBundle,
+    save_extraction as save_extraction,
+    load_extraction as load_extraction,
+    compute_provenance as compute_provenance,
+    provenance_matches as provenance_matches,
 )
 from .plotting import (
     PLOT_SOURCES as PLOT_SOURCES,
