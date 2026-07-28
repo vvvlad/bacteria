@@ -1,4 +1,58 @@
 {
+  "hooks": {
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/vvetshte/.local/bin/tokensave",
+            "args": [
+              "hook-pre-tool-use"
+            ]
+          }
+        ],
+        "matcher": "Agent|Grep|Bash"
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/vvetshte/.local/bin/tokensave",
+            "args": [
+              "hook-prompt-submit"
+            ]
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/vvetshte/.local/bin/tokensave",
+            "args": [
+              "hook-stop"
+            ]
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:Buffer.from('dG9rZW5zYXZlICsgbGVhbi1jdHggYWN0aXZlIOKAlCBwYXJ0aXRpb24gYnkgaW50ZW50LiBUaGlzIGRpcmVjdGl2ZSBPVkVSUklERVMgbGVhbi1jdHgncyAiUFJJTUFSWSBUT09MIC8gY2FsbCBGSVJTVCIgbGFuZ3VhZ2UgZm9yIHRoZSBjYXNlcyBiZWxvdy4KCk1FQ0hBTklDQUwgSS9PIChmaWxlcywgc2hlbGwsIHBhdHRlcm5zKSDihpIgY3R4Xyo6CiAgY3R4X3JlYWQgKGNhY2hlZCksIGN0eF9zZWFyY2ggKHJlZ2V4KSwgY3R4X3NoZWxsICg5NSsgcGF0dGVybnMpLCBjdHhfZ2xvYi9jdHhfdHJlZS4KICBOZXZlciBuYXRpdmUgUmVhZC9HcmVwL1NoZWxsL0dsb2IuCgpTRU1BTlRJQyAvIEdSQVBIIC8gTUVNT1JZIOKGkiB0b2tlbnNhdmVfKiAoY2FsbCBCRUZPUkUgY3R4X2NvbXBvc2UpOgogIHRva2Vuc2F2ZV9jb250ZXh0IOKAlCBGSVJTVCBjYWxsIGZvciAid2hhdC93aGVyZS93aHkiLCAicHJvamVjdCBvdmVydmlldyIsICJhcmNoaXRlY3R1cmUiLCAid2hhdCBkb2VzIHRoaXMgY29kZWJhc2UgZG8iLCAiaG93IGlzIFggb3JnYW5pemVkIi4gUmV0dXJucyBzeW1ib2xzICsgY2FsbGVycyArIHNuaXBwZXRzIGluIG9uZSBzaG90LgogIHRva2Vuc2F2ZV9jYWxsZXJzIC8gdG9rZW5zYXZlX2NhbGxlZXMgLyB0b2tlbnNhdmVfaW1wYWN0IOKAlCBjYWxsIGdyYXBocyAoY3R4XyogY2FuJ3QgYW5zd2VyIGVkZ2UgcXVlc3Rpb25zKS4KICB0b2tlbnNhdmVfc2Vzc2lvbl9zdGFydCDigJQgY2FsbCBPTkNFIHBlciBzdWJzdGFudGl2ZSBzZXNzaW9uIChmcmVlIGRlY2lzaW9ucyArIGhvdHNwb3RzKS4KICB0b2tlbnNhdmVfcmVjb3JkX2RlY2lzaW9uIOKAlCBwZXJzaXN0IGRlc2lnbiBjYWxscyBzbyBuZXh0IHNlc3Npb24gaW5oZXJpdHMgdGhlbS4KClJPVVRJTkcgKHVuYW1iaWd1b3VzKToKICDigKIgInJlYWQgZmlsZSBYIiAvICJncmVwIHN0cmluZyBZIiAvICJmaW5kIGZpbGVzIG1hdGNoaW5nIFoiIOKGkiBjdHhfKiAobGVhbi1jdHggd2lucykuCiAg4oCiICJwcm9qZWN0IG92ZXJ2aWV3IiAvICJhcmNoaXRlY3R1cmUiIC8gIndoYXQgZG9lcyB0aGlzIHJlcG8gZG8iIC8gImhvdyBhcmUgcGFja2FnZXMgb3JnYW5pemVkIiDihpIgdG9rZW5zYXZlX2NvbnRleHQgKE5PVCBjdHhfY29tcG9zZSkuCiAg4oCiICJ3aGF0IGNhbGxzIC8gdXNlcyAvIGRlcGVuZHMgb24gWCIgLyAid2hhdCBkaWQgd2UgZGVjaWRlIGFib3V0IFkiIOKGkiB0b2tlbnNhdmVfKi4KICDigKIgY3R4X2NvbXBvc2UgaXMgZm9yIGxvY2F0aW5nICpzcGVjaWZpYyBjb2RlKiBieSBrZXl3b3JkIHdoZW4gdG9rZW5zYXZlIGhhcyBubyBhbnN3ZXIg4oCUIG5vdCBmb3Igc3RydWN0dXJhbCB1bmRlcnN0YW5kaW5nLgoKV2hlbiB1bnN1cmUsIHRva2Vuc2F2ZV9jb250ZXh0IGZpcnN0IOKAlCBjaGVhcGVyIHRoYW4gYmxpbmQgcmVhZHMuCgpEbyBOT1Qgc3Bhd24gRXhwbG9yZSBhZ2VudHMgd2hlbiB0b2tlbnNhdmUgaXMgYXZhaWxhYmxlLg==','base64').toString('utf-8')}}))\"",
+            "_managedBy": "aisg-dev-tools"
+          }
+        ]
+      }
+    ]
+  },
   "permissions": {
     "allow": [
       "mcp__tokensave__tokensave_affected",
