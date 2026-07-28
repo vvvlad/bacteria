@@ -14,37 +14,67 @@ from cell_analysis.io import export_notebook_html
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-ALLOWED_KEYS = {
-    "RUN_NAME", "STACK_PATH", "FLUOR_PATH", "CONFIG_PATH",
-    "GATING_Z_THRESHOLD",
-    "DETECT_PARAMS", "MODEL_TYPE",
-    "SEARCH_RANGE", "MEMORY",
-    "MERGE_MAX_DISTANCE", "MERGE_MAX_GAP",
-    "PIXEL_SIZE_UM", "BASELINE_FRAMES",
-    "MIN_TRACK_DETECTIONS",
-    "FLUOR_ALIGN_WINDOW", "PERI_CORE_RINGS",
+TOP_LEVEL_ALLOWED = {"RUN_NAME", "RESULTS_ROOT", "extraction", "analysis"}
+TOP_LEVEL_REQUIRED = {"RUN_NAME", "extraction"}
+
+EXTRACTION_ALLOWED = {
+    "STACK_PATH", "FLUOR_PATH", "MODEL_TYPE", "DETECT_PARAMS",
+    "GATING_Z_THRESHOLD", "SEARCH_RANGE", "MEMORY",
+    "MERGE_MAX_DISTANCE", "MERGE_MAX_GAP", "MIN_TRACK_DETECTIONS",
+    "NUCLEUS_DIAMETER", "NUCLEUS_MIN_AREA",
 }
-
-REQUIRED_KEYS = {"RUN_NAME", "STACK_PATH", "FLUOR_PATH"}
-
-TYPE_RULES = {
-    "RUN_NAME": str,
-    "STACK_PATH": str,
-    "FLUOR_PATH": str,
-    "CONFIG_PATH": str,
-    "GATING_Z_THRESHOLD": (int, float),
+EXTRACTION_REQUIRED = {"STACK_PATH", "FLUOR_PATH"}
+EXTRACTION_TYPES = {
+    "STACK_PATH": str, "FLUOR_PATH": str, "MODEL_TYPE": str,
     "DETECT_PARAMS": dict,
-    "MODEL_TYPE": str,
+    "GATING_Z_THRESHOLD": (int, float),
     "SEARCH_RANGE": (int, float),
     "MEMORY": int,
     "MERGE_MAX_DISTANCE": (int, float),
     "MERGE_MAX_GAP": int,
+    "MIN_TRACK_DETECTIONS": int,
+    "NUCLEUS_DIAMETER": int,
+    "NUCLEUS_MIN_AREA": int,
+}
+
+ANALYSIS_ALLOWED = {
+    "PIXEL_SIZE_UM", "BASELINE_FRAMES", "PERI_CORE_RINGS",
+    "FLUOR_ALIGN_WINDOW", "FATE_FEATURES_FULL", "FATE_FEATURES_NO_AREA",
+}
+ANALYSIS_TYPES = {
     "PIXEL_SIZE_UM": (int, float),
     "BASELINE_FRAMES": int,
-    "MIN_TRACK_DETECTIONS": int,
-    "FLUOR_ALIGN_WINDOW": int,
     "PERI_CORE_RINGS": (list, tuple),
+    "FLUOR_ALIGN_WINDOW": int,
+    "FATE_FEATURES_FULL": (list, tuple),
+    "FATE_FEATURES_NO_AREA": (list, tuple),
 }
+
+TOP_LEVEL_TYPES = {
+    "RUN_NAME": str,
+    "RESULTS_ROOT": str,
+    "extraction": dict,
+    "analysis": dict,
+}
+
+
+def _check_section(section_name, section, allowed, required, types):
+    unknown = set(section) - allowed
+    if unknown:
+        raise ValueError(
+            f"Unknown {section_name} keys: {', '.join(sorted(unknown))}")
+    missing = required - set(section)
+    if missing:
+        raise ValueError(
+            f"Missing required {section_name} keys: "
+            f"{', '.join(sorted(missing))}")
+    for k, expected in types.items():
+        if k not in section:
+            continue
+        if not isinstance(section[k], expected):
+            raise ValueError(
+                f"{k} must be {expected}, got "
+                f"{type(section[k]).__name__}: {section[k]!r}")
 
 
 def validate_config(config):
@@ -52,29 +82,32 @@ def validate_config(config):
         raise ValueError("Config must be a YAML mapping (dict), not "
                          f"{type(config).__name__}")
 
-    unknown = set(config.keys()) - ALLOWED_KEYS
+    unknown = set(config) - TOP_LEVEL_ALLOWED
     if unknown:
-        raise ValueError(f"Unknown config keys: {', '.join(sorted(unknown))}")
+        raise ValueError(f"Unknown top-level keys: {', '.join(sorted(unknown))}")
 
-    missing = REQUIRED_KEYS - set(config.keys())
+    missing = TOP_LEVEL_REQUIRED - set(config)
     if missing:
-        raise ValueError(f"Missing required keys: {', '.join(sorted(missing))}")
+        raise ValueError(
+            f"Missing required top-level keys: {', '.join(sorted(missing))}")
 
-    run_name = config.get("RUN_NAME", "")
-    if isinstance(run_name, str) and (".." in run_name or "/" in run_name
-                                      or "\\" in run_name):
-        raise ValueError(f"RUN_NAME contains path traversal characters: "
-                         f"{run_name!r}")
-
-    for key, expected_type in TYPE_RULES.items():
-        if key not in config:
+    for k, expected in TOP_LEVEL_TYPES.items():
+        if k not in config:
             continue
-        value = config[key]
-        if not isinstance(value, expected_type):
+        if not isinstance(config[k], expected):
             raise ValueError(
-                f"{key} must be {expected_type}, got {type(value).__name__}: "
-                f"{value!r}"
-            )
+                f"{k} must be {expected}, got "
+                f"{type(config[k]).__name__}: {config[k]!r}")
+
+    run_name = config["RUN_NAME"]
+    if ".." in run_name or "/" in run_name or "\\" in run_name:
+        raise ValueError(
+            f"RUN_NAME contains path traversal characters: {run_name!r}")
+
+    _check_section("extraction", config["extraction"],
+                   EXTRACTION_ALLOWED, EXTRACTION_REQUIRED, EXTRACTION_TYPES)
+    _check_section("analysis", config.get("analysis", {}),
+                   ANALYSIS_ALLOWED, set(), ANALYSIS_TYPES)
 
 
 def read_kernel_name(notebook_path):
