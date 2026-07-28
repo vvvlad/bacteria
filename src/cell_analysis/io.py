@@ -1,5 +1,8 @@
 """Loading and saving image stacks and results."""
 
+import hashlib
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -106,3 +109,86 @@ def save_summary(data: dict, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     pd.DataFrame([_flatten(data)]).to_csv(path, index=False)
+
+
+def _sha256_file(path: str | Path, chunk_size: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _canonical_path(path: str | Path, repo_root: Path | None) -> str:
+    p = Path(path).resolve()
+    if repo_root is None:
+        return str(p)
+    repo_root_resolved = Path(repo_root).resolve()
+    # Only return relative path if repo_root is the direct parent
+    # Otherwise, always return absolute (path is outside or too nested)
+    p_parent = p.parent
+    if p_parent == repo_root_resolved:
+        return str(p.name)
+    # If repo_root is not the direct parent, return absolute
+    return str(p)
+
+
+def compute_provenance(
+    extraction_params: dict,
+    stack_path: str | Path,
+    fluor_path: str | Path,
+    *,
+    repo_root: Path | None = None,
+    package_version: str | None = None,
+) -> dict:
+    """Build a provenance dict for an extraction run.
+
+    ``extract_hash`` = sha256 of (canonicalized params JSON + stack sha256
+    + fluor sha256). ``cell_analysis_version`` is recorded for audit but
+    is NOT part of ``extract_hash``.
+    """
+    stack_sha = _sha256_file(stack_path)
+    fluor_sha = _sha256_file(fluor_path)
+    params_canonical = json.dumps(extraction_params, sort_keys=True,
+                                  separators=(",", ":"))
+    h = hashlib.sha256()
+    h.update(params_canonical.encode("utf-8"))
+    h.update(stack_sha.encode("utf-8"))
+    h.update(fluor_sha.encode("utf-8"))
+    if package_version is None:
+        try:
+            from importlib.metadata import version
+            package_version = version("cell-analysis")
+        except Exception:
+            package_version = "unknown"
+    return {
+        "extract_hash": h.hexdigest(),
+        "stack_path": _canonical_path(stack_path, repo_root),
+        "fluor_path": _canonical_path(fluor_path, repo_root),
+        "stack_sha256": stack_sha,
+        "fluor_sha256": fluor_sha,
+        "params": extraction_params,
+        "cell_analysis_version": package_version,
+        "timestamp_utc": datetime.now(timezone.utc).isoformat(
+            timespec="seconds"),
+    }
+
+
+def provenance_matches(existing: dict, candidate: dict) -> tuple[bool, list[str]]:
+    """Compare two provenance dicts; return (match, drifted_fields).
+
+    ``drifted_fields`` lists which top-level fields changed. For
+    ``params``, entries look like ``params.KEY`` for each differing key.
+    """
+    if existing.get("extract_hash") == candidate.get("extract_hash"):
+        return True, []
+    drift: list[str] = []
+    for field in ("stack_sha256", "fluor_sha256"):
+        if existing.get(field) != candidate.get(field):
+            drift.append(field)
+    p_old = existing.get("params", {})
+    p_new = candidate.get("params", {})
+    for key in sorted(set(p_old) | set(p_new)):
+        if p_old.get(key) != p_new.get(key):
+            drift.append(f"params.{key}")
+    return False, drift
