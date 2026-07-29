@@ -353,7 +353,11 @@ Then create a config file (copy `configs/run_01.yaml` and update the paths and r
 
 ### Via CLI (recommended)
 
-The runner accepts one or more YAML configs. It executes the notebook once per config via papermill, then regenerates the `docs/index.html` landing page.
+The runner drives two notebooks per config — `notebooks/extract.ipynb`
+(image → identities, expensive Cellpose + tracking) and
+`notebooks/analysis.ipynb` (identities → derived metrics + plots, fast).
+It skips extraction when nothing that would change it has changed,
+so re-running to iterate on analysis takes seconds instead of minutes.
 
 **Single config:**
 
@@ -373,56 +377,160 @@ uv run python scripts/run_experiment.py configs/control_experiment.yaml configs/
 uv run python scripts/run_experiment.py configs/*.yaml
 ```
 
-Each run writes to its own `results/<RUN_NAME>/` folder (HTML report, frozen `config.yaml`, and CSVs). When multiple configs are passed, the script prints a summary table at the end and exits with code 0 if all runs succeeded, or 1 if any failed. Failures do **not** stop the remaining runs — each config is attempted independently and a failed run leaves `report_failed.ipynb` alongside `report.html` for debugging.
+Each run writes to its own `results/<RUN_NAME>/{extraction,analysis}/`
+folders (see [Output artifacts](#output-artifacts) for the layout).
+When multiple configs are passed, the script prints a summary table at
+the end and exits with code 0 if all runs succeeded, or 1 if any failed.
+Failures do **not** stop the remaining runs — each config is attempted
+independently and a failed run leaves `report_failed.ipynb` alongside
+`report.html` for debugging.
+
+### Extraction reuse
+
+Every extraction run writes a `provenance.json` alongside its outputs.
+It contains an `extract_hash` — sha256 of the extraction params (from
+the YAML `extraction:` section, excluding path strings) combined with
+the sha256 of both source TIFFs. On the next run the runner compares:
+
+- If `extract_hash` matches → **reuse**: prints
+  `reusing extraction at <path>` and jumps straight to analysis.
+- If artifacts are missing or the hash differs → **re-extract**: prints
+  `extracting: <reason>` (e.g. `missing artifacts (label_stack.npz)` or
+  `param drift: params.GATING_Z_THRESHOLD`) and re-runs Cellpose.
+
+Analysis always runs (it's cheap). This means iterating on
+`analysis:` params (`PIXEL_SIZE_UM`, `PERI_CORE_RINGS`, plot styling,
+etc.) never triggers Cellpose.
+
+### CLI flags
+
+| Flag | Effect |
+|------|--------|
+| `--force-extract` | Re-run extraction even when the provenance hash matches. Use after changing extraction *code* (which the hash doesn't track). |
+| `--skip-analysis` | Run extraction only. Useful for pre-baking extractions across many datasets. |
+| `--analysis-only` | Skip extraction; error if artifacts are missing. If provenance hash drifted from the current config, prints a loud warning listing the drifted fields but proceeds. |
+| `--results-root PATH` | Override the results root for this invocation (wins over YAML `RESULTS_ROOT`; falls back to `<repo>/results/`). |
 
 ### Via Jupyter (interactive)
 
-For development or one-off analysis, open the notebook directly:
+For development or one-off analysis, open either notebook directly:
 
 ```bash
-uv run jupyter lab notebooks/analysis.ipynb
+uv run jupyter lab notebooks/extract.ipynb   # to re-extract manually
+uv run jupyter lab notebooks/analysis.ipynb  # to play with plots + metrics
 ```
 
-Edit the parameters cell at the top and run all cells. The notebook is also the template used by the CLI runner.
+Both notebooks have a `parameters`-tagged cell with defaults for
+`control_experiment` so opening them and running-all "just works"
+against the existing extraction on disk. Edit that cell to switch
+runs. When executed via the CLI runner, papermill overwrites those
+defaults with the YAML config's values.
 
-### How the notebook and CLI runner relate
+### How the notebooks and CLI runner relate
 
-The CLI runner is **not** a separate reimplementation of the pipeline — it executes the notebook itself:
+The CLI runner is **not** a separate reimplementation — it executes the
+two notebooks:
 
-1. `run_experiment.py` reads `notebooks/analysis.ipynb`.
-2. Papermill injects the YAML config as parameters into the notebook's parameters cell.
-3. Every cell runs top-to-bottom into a temporary `.ipynb`.
-4. The executed notebook is rendered to `results/<RUN_NAME>/report.html`.
+1. `run_experiment.py` reads the YAML config and calls
+   `validate_config`, which enforces the two-section schema (`extraction:` +
+   `analysis:`) and per-section allowlists.
+2. For extraction: checks `provenance.json` against a freshly computed
+   hash of the current `extraction:` section and source-file sha256s.
+   If stale (or `--force-extract`), papermill executes
+   `notebooks/extract.ipynb` with the `extraction:` section injected as
+   parameters, plus the resolved absolute `STACK_PATH`/`FLUOR_PATH` and
+   `RESULTS_ROOT`.
+3. For analysis: papermill executes `notebooks/analysis.ipynb` with the
+   `analysis:` section injected as parameters, reading the extraction
+   bundle from disk via `load_extraction(...)`. Executed notebook is
+   rendered to `results/<RUN_NAME>/analysis/report.html`.
+4. `publish_reports()` copies each `report.html` to `docs/<RUN>/` and
+   rebuilds `docs/index.html`.
 
 Consequences:
 
-- **Any new executable cell you add to the notebook will run under the CLI**, and its output (plots, prints, tables) will appear in `report.html`.
-- **New config knobs must be registered.** If a new cell reads a value that should vary per run, add the key to the notebook's parameters cell **and** to `ALLOWED_KEYS` / `TYPE_RULES` in `scripts/run_experiment.py`. Otherwise the value is fixed to the notebook's default.
-- **Cell failures abort the run.** Papermill stops at the first exception; the partially-executed notebook is saved as `report_failed.ipynb` in the results folder and later cells are skipped.
-- **The notebook is the single source of truth** for analysis logic. The CLI is just a batch driver that parameterizes and captures it.
+- **New cells you add to `analysis.ipynb` show up in `report.html`.**
+- **New config knobs must be registered.** Add the key to the
+  notebook's `parameters` cell and to the appropriate allowlist
+  (`EXTRACTION_ALLOWED` / `EXTRACTION_TYPES` or `ANALYSIS_ALLOWED` /
+  `ANALYSIS_TYPES`) in `scripts/run_experiment.py`.
+- **Cell failures abort the run.** Papermill stops at the first
+  exception; the partially-executed notebook is saved as
+  `report_failed.ipynb` in the run's `analysis/` folder.
+- **The notebooks are the single source of truth** for pipeline logic;
+  the CLI just parameterizes them.
 
 ## Config Parameters
 
-All parameters are set in the YAML config file (or the notebook's parameters cell). See `configs/run_01.yaml` for a complete example.
+Configs use a two-section schema with `RUN_NAME` and an optional
+`RESULTS_ROOT` at the top level. See `configs/control_experiment.yaml`
+for a complete example.
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `RUN_NAME` | `run_01` | Unique name; results saved to `results/<RUN_NAME>/` |
-| `STACK_PATH` | — | Path to phase-contrast TIFF (relative to `notebooks/`) |
-| `FLUOR_PATH` | — | Path to fluorescence TIFF (relative to `notebooks/`) |
-| `DETECT_PARAMS.diameter` | 32 | Median cell diameter in pixels |
-| `DETECT_PARAMS.min_area` | 300 | Minimum cell area (rejects debris) |
-| `DETECT_PARAMS.min_circularity` | 0.7 | Minimum circularity (1.0 = perfect circle) |
-| `DETECT_PARAMS.min_contrast` | 1250 | Minimum intensity contrast (rejects faded cells) |
-| `DETECT_PARAMS.gpu` | true | GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA) |
-| `SEARCH_RANGE` | 30.0 | Max cell displacement between frames (pixels) |
-| `MEMORY` | 3 | Frames a cell can disappear before breaking the track |
-| `MERGE_MAX_DISTANCE` | 15.0 | Max pixels between track end/start to merge fragments |
-| `MERGE_MAX_GAP` | 18 | Max frame gap for fragment merging |
-| `MIN_TRACK_DETECTIONS` | 4 | Minimum frames a track must span to be kept |
-| `GATING_Z_THRESHOLD` | 3.5 | MAD-based Z-score threshold for flagging bad frames |
-| `FLUOR_DROP_THRESHOLD` | -0.3 | Fluorescence drop threshold for disappearance detection |
-| `FLUOR_DROP_WINDOW` | 2 | Frames over which to measure cumulative fluorescence drop |
+```yaml
+RUN_NAME: my_experiment
+# RESULTS_ROOT: /path/to/cloud-synced/folder   # optional override
+
+extraction:
+  STACK_PATH: "../data/my_experiment/phase.tif"
+  FLUOR_PATH: "../data/my_experiment/fluorescence.tif"
+  # ... extraction params (see table) ...
+
+analysis:
+  # ... analysis params (see table) ...
+```
+
+**Which section owns which knob:** anything that affects the produced
+`label_stack.npz` / tracked identities goes in `extraction:` and
+triggers a Cellpose re-run when changed. Anything that only reshapes
+already-extracted data (pixel-size calibration, plot styling, feature
+selection) goes in `analysis:` and re-runs in seconds.
+
+### Top-level keys
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `RUN_NAME` | str | *(required)* | Unique per-experiment name. Results go to `<results_root>/<RUN_NAME>/`. No `..`, `/`, or `\`. |
+| `RESULTS_ROOT` | str | `<repo>/results` | Override root for this experiment. `--results-root` on the CLI overrides both. |
+| `extraction` | dict | *(required)* | Extraction-phase params (below). |
+| `analysis` | dict | `{}` | Analysis-phase params (below). Empty section is allowed. |
+
+### `extraction:` — Cellpose + tracking + gating
+
+Changing any of these keys invalidates cached extractions.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `STACK_PATH` | str | *(required)* | Path to phase-contrast TIFF, relative to `notebooks/` |
+| `FLUOR_PATH` | str | *(required)* | Path to fluorescence TIFF, relative to `notebooks/` |
+| `MODEL_TYPE` | str | `cyto3` | Cellpose model name |
+| `DETECT_PARAMS.diameter` | int | 32 | Median cell diameter in pixels |
+| `DETECT_PARAMS.min_area` | int | 300 | Minimum cell area (rejects debris) |
+| `DETECT_PARAMS.min_circularity` | float | 0.7 | Minimum circularity (1.0 = perfect circle) |
+| `DETECT_PARAMS.min_contrast` | int | 1250 | Minimum intensity contrast (rejects faded cells) |
+| `DETECT_PARAMS.exclude_edges` | bool | true | Drop cells touching the frame border |
+| `DETECT_PARAMS.gpu` | bool | true | GPU acceleration (MPS on Apple Silicon, CUDA on NVIDIA) |
+| `DETECT_PARAMS.resample` | bool | false | Resample masks (slower, more precise boundaries) |
+| `GATING_Z_THRESHOLD` | float | 3.5 | MAD-based Z-score threshold for flagging bad frames |
+| `SEARCH_RANGE` | float | 30.0 | Max cell displacement between frames (pixels) |
+| `MEMORY` | int | 3 | Frames a cell can disappear before breaking the track |
+| `MERGE_MAX_DISTANCE` | float | 15.0 | Max pixels between track end/start to merge fragments |
+| `MERGE_MAX_GAP` | int | 18 | Max frame gap for fragment merging |
+| `MIN_TRACK_DETECTIONS` | int | 4 | Minimum frames a track must span to be kept. Lives here (not in analysis) because the filter drops identities before persistence. |
+| `NUCLEUS_DIAMETER` | int | 25 | Cellpose diameter for the fluorescence-channel nucleus segmentation |
+| `NUCLEUS_MIN_AREA` | int | 100 | Minimum nucleus area |
+
+### `analysis:` — geometry + metrics + fate prediction
+
+Change these freely; only the analysis phase re-runs.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `PIXEL_SIZE_UM` | float | 0.0645 | µm-per-pixel calibration. Scales `area` to µm², derives `radius`, `volume`, `surface_area`. Pass `1.0` to keep pixel units. |
+| `BASELINE_FRAMES` | int | 3 | Number of initial frames used for the §6.3 area-histogram baseline (before medium changes drive swelling) |
+| `PERI_CORE_RINGS` | list of 3 floats | `[0.15, 0.35, 0.55]` | `(core_max, peri_min, peri_max)` as fractions of the cell's equivalent radius R. Defines the inner disk and outer annulus for the peri/core asymmetry metric. |
+| `FLUOR_ALIGN_WINDOW` | int | 5 | Frames on each side of disappearance for the fluorescence-alignment tables (`fluorescence_alignment.csv`, `peri_core_alignment.csv`) |
+| `FATE_FEATURES_FULL` | list of str | `[area, cv, nnrm, mean_edge_distance_norm, gaussian_sigma_norm]` | Frame-0 columns fed to the logistic-regression fate predictor |
+| `FATE_FEATURES_NO_AREA` | list of str | `[cv, nnrm, mean_edge_distance_norm, gaussian_sigma_norm]` | Same, without `area` — for the ablation comparison |
 
 ## Output artifacts
 
