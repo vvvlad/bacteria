@@ -24,7 +24,7 @@ extraction:
 analysis:
   PIXEL_SIZE_UM: 0.0645
   BASELINE_FRAMES: 3
-  PERI_CORE_RINGS: [2, 2]
+  PERI_CORE_RINGS: [0.15, 0.35, 0.55]
   FLUOR_ALIGN_WINDOW: 5
   FATE_FEATURES_FULL:
     - area
