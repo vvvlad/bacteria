@@ -1,6 +1,7 @@
 """CLI runner for executing analysis notebooks via papermill."""
 
 import argparse
+import glob
 import re
 import shutil
 import sys
@@ -326,8 +327,21 @@ def main():
     if args.skip_analysis and args.analysis_only:
         parser.error("--skip-analysis and --analysis-only are mutually exclusive")
 
+    # Expand glob patterns manually so `configs/*.yaml` works on shells
+    # that don't auto-expand (PowerShell, cmd.exe). Bash/zsh already
+    # expand before the string reaches us — this is a no-op there.
+    expanded_configs = []
+    for pattern in args.configs:
+        matches = sorted(glob.glob(pattern))
+        if matches:
+            expanded_configs.extend(matches)
+        else:
+            # Not a glob (or matches nothing) — pass through and let
+            # run_single_config error clearly if the file's missing.
+            expanded_configs.append(pattern)
+
     results = {}
-    for path in args.configs:
+    for path in expanded_configs:
         print(f"Running: {path}")
         try:
             ok = run_single_config(

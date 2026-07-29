@@ -293,7 +293,10 @@ than a full pipeline run.
 
 2. **Copy a config and edit the paths + name:**
    ```bash
+   # macOS / Linux
    cp configs/control_experiment.yaml configs/my_experiment.yaml
+   # Windows PowerShell
+   Copy-Item configs/control_experiment.yaml configs/my_experiment.yaml
    ```
    Change `RUN_NAME`, `STACK_PATH`, `FLUOR_PATH` at minimum. Detection
    defaults are tuned for the existing datasets — you may need to
@@ -332,15 +335,16 @@ plt.imshow(labels[0], cmap="tab20"); plt.show()
 ```
 
 ```bash
-# 3. Fiji / ImageJ — convert to TIFF first:
+# 3. Fiji / ImageJ — convert to TIFF first. Writes labels.tif to the
+# current directory (works on any OS):
 uv run python -c "
 import numpy as np, tifffile
 labels = np.load('results/control_experiment/extraction/label_stack.npz')['label_stack']
-tifffile.imwrite('/tmp/labels.tif', labels.astype('uint16'))
+tifffile.imwrite('labels.tif', labels.astype('uint16'))
 "
 ```
 
-Then open `/tmp/labels.tif` in Fiji and set **Image → Lookup Tables →
+Then open `labels.tif` in Fiji and set **Image → Lookup Tables →
 glasbey_on_dark** for a colored view (**Image → Adjust →
 Brightness/Contrast → Auto** stretches the LUT across all label ids).
 
@@ -736,3 +740,36 @@ internet. If behind a proxy, set `HTTPS_PROXY` before running.
 **Large `.npz` files bloat your Dropbox/iCloud** — set `RESULTS_ROOT`
 in the config (or `--results-root` on the CLI) to a local-only folder
 if that matters.
+
+
+### Windows-specific notes
+
+**Glob patterns like `configs/*.yaml` work.** The runner expands them
+itself (bash/zsh expand before the string arrives; PowerShell doesn't).
+No shell workaround needed.
+
+**Path separators.** Forward slashes work everywhere Python touches
+paths — you can write `../data/foo.tif` in YAML on Windows and Python
+handles it. Only worry about backslashes when composing paths in
+PowerShell itself.
+
+**No NVIDIA GPU?** Set `DETECT_PARAMS.gpu: false` in your config.
+Cellpose will fall back to CPU. Expect ~10× slower on a mid-range CPU
+(15–30 min per extraction instead of 2–5 min on GPU) — but everything
+else works identically. Extraction reuse means you only pay this once
+per dataset.
+
+**Opening reports.** Use `start docs\reports\<run>\report.html` in
+PowerShell (equivalent of macOS `open`).
+
+**napari display issues.** If `scripts/view_labels.py` opens but the
+window is blank or errors out with a Qt message, install the
+`PyQt5` extras — some Windows Python installs ship without them:
+```powershell
+uv pip install PyQt5
+```
+
+**Long filenames with spaces or `+`.** All the shipped configs use
+paths like `"Grad LB+sucr-20-0.zvi  Ch0.tif"` (spaces, `+`, double
+space). YAML handles them fine when quoted, and Python's `pathlib`
+handles them cross-platform. Just keep the quotes in the YAML.
