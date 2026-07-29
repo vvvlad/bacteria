@@ -1,22 +1,39 @@
-RUN_NAME: "protein_synthesis_arrested"
-STACK_PATH: "../data/Protein-synthesis-arrested/Grad LB+CAM sucr20-0-TL.zvi  Ch0.tif"
-FLUOR_PATH: "../data/Protein-synthesis-arrested/Grad LB+CAM sucr20-0-TL.zvi  Ch1-BG.tif"
+RUN_NAME: protein_synthesis_arrested
 
-GATING_Z_THRESHOLD: 3.5
+extraction:
+  STACK_PATH: "../data/Protein-synthesis-arrested/Grad LB+CAM sucr20-0-TL.zvi  Ch0.tif"
+  FLUOR_PATH: "../data/Protein-synthesis-arrested/Grad LB+CAM sucr20-0-TL.zvi  Ch1-BG.tif"
+  MODEL_TYPE: cyto3
+  DETECT_PARAMS:
+    diameter: 32
+    min_area: 300
+    min_circularity: 0.7
+    min_contrast: 1250
+    exclude_edges: true
+    gpu: true
+    resample: false
+  GATING_Z_THRESHOLD: 3.5
+  SEARCH_RANGE: 30.0
+  MEMORY: 3
+  MERGE_MAX_DISTANCE: 15.0
+  MERGE_MAX_GAP: 18
+  MIN_TRACK_DETECTIONS: 4
+  NUCLEUS_DIAMETER: 25
+  NUCLEUS_MIN_AREA: 100
 
-DETECT_PARAMS:
-  diameter: 32
-  min_area: 300
-  min_circularity: 0.7
-  min_contrast: 1250
-  exclude_edges: true
-  gpu: true
-  resample: false
-
-SEARCH_RANGE: 30.0
-MEMORY: 3
-MERGE_MAX_DISTANCE: 15.0
-MERGE_MAX_GAP: 18
-MIN_TRACK_DETECTIONS: 4
-
-FLUOR_ALIGN_WINDOW: 3
+analysis:
+  PIXEL_SIZE_UM: 0.0645
+  BASELINE_FRAMES: 3
+  PERI_CORE_RINGS: [2, 2]
+  FLUOR_ALIGN_WINDOW: 5
+  FATE_FEATURES_FULL:
+    - area
+    - fluor_total
+    - cv
+    - mean_edge_distance_norm
+    - gaussian_sigma_norm
+  FATE_FEATURES_NO_AREA:
+    - fluor_total
+    - cv
+    - mean_edge_distance_norm
+    - gaussian_sigma_norm
