@@ -31,6 +31,12 @@ docs/superpowers/specs/2026-05-26-papermill-runner-design.md
 # Generated reports (large HTML files from papermill runs)
 results/*/report.html
 results/*/report_failed.ipynb
+
+# Pre-split legacy results (moved aside 2026-07-29 during extract/analysis split)
+results_legacy_*/
+
+# SDD workflow scratch
+.superpowers/
 .tokensave
 .mcp.json
 .claude/
