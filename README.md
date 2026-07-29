@@ -308,9 +308,10 @@ bacteria/
 │       └── analysis/                 # Identities → metrics + plots (fast, iterated)
 │           ├── report.html           # Self-contained HTML report
 │           └── *.csv                 # enriched tracked, fate predictions, ...
-├── docs/                             # Publishing view over results/ (git-trackable)
-│   ├── index.html                    # Landing page listing all runs
-│   └── <run>/report.html             # Report copy with a "back to index" link
+├── docs/                             # Real docs (Markdown, images)
+│   └── reports/                      # Publishing view over results/ (git-trackable)
+│       ├── index.html                # Landing page listing all runs
+│       └── <run>/report.html         # Report copy with a "back to index" link
 ├── scripts/
 │   ├── run_experiment.py             # Two-phase runner (extraction + analysis)
 │   ├── view_labels.py                # Open a run's label stacks in napari
@@ -444,8 +445,9 @@ two notebooks:
    `analysis:` section injected as parameters, reading the extraction
    bundle from disk via `load_extraction(...)`. Executed notebook is
    rendered to `results/<RUN_NAME>/analysis/report.html`.
-4. `publish_reports()` copies each `report.html` to `docs/<RUN>/` and
-   rebuilds `docs/index.html`.
+4. `publish_reports()` copies each `report.html` to `docs/reports/<RUN>/`
+   and rebuilds `docs/reports/index.html` — real Markdown docs live
+   directly under `docs/`, undisturbed.
 
 Consequences:
 

@@ -254,7 +254,7 @@ BACK_LINK = (
 
 
 def publish_reports():
-    docs_dir = REPO_ROOT / "docs"
+    docs_dir = REPO_ROOT / "docs" / "reports"
     docs_dir.mkdir(parents=True, exist_ok=True)
 
     results_dir = REPO_ROOT / "results"
@@ -311,7 +311,7 @@ def publish_reports():
 </html>"""
 
     (docs_dir / "index.html").write_text(html, encoding="utf-8")
-    print(f"Published {len(runs)} reports to docs/")
+    print(f"Published {len(runs)} reports to docs/reports/")
 
 
 def main():
