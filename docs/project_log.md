@@ -1036,3 +1036,51 @@ averaging in §8.5c. Control is flat on average, but 20 → 8 baseline-positive
 donut cells convert away from donut before disappearance (10% → 4%),
 showing a real subpopulation transformation despite the overall median
 being stable.
+
+### Extraction/analysis notebook split (2026-07-29)
+
+Monolithic `analysis.ipynb` split into two papermill notebooks to enable fast
+iteration on visualizations and statistics without re-running expensive
+Cellpose segmentation and tracking.
+
+- **Two-notebook architecture.** `notebooks/extract.ipynb` (cells 1–15, ~12
+  min) runs Cellpose on phase and fluorescence channels, tracks cells, detects
+  bad frames, and emits extraction artifacts to `results/<RUN>/extraction/`:
+  `provenance.json` (extraction params + file hashes), `label_stack.npz`,
+  `nucleus_label_stack.npz`, `tracked_cells.csv`, `track_statistics.csv`,
+  `frame_diagnostics.csv`, `merge_log.csv`, `dropped_frames.csv`.
+  `notebooks/analysis.ipynb` (cells 1–75, ~6 min) loads the extraction
+  artifacts, computes all derived metrics (geometry, fluorescence, nucleoid
+  distribution, fate prediction), generates all plots, and saves to
+  `results/<RUN>/analysis/` (15 CSVs + `report.html`).
+- **Extraction reuse.** Runner (`scripts/run_experiment.py`) checks
+  `provenance.json` hash (sha256 of extraction params + phase/fluor file
+  sha256s) before extracting. If params and sources match, skip extraction and
+  reuse cached artifacts — ~12 min saved. New CLI flags: `--force-extract`
+  (re-segment/re-track regardless), `--skip-analysis` (extract only),
+  `--analysis-only` (load extraction, skip extract step).
+- **Config schema.** All three YAML configs (`control_experiment.yaml`,
+  `protein_synthesis_arrested.yaml`, `run_01.yaml`) migrated to two-section
+  schema with top-level `extraction:` and `analysis:` keys; runner enforces
+  parameter names per section (no namespace pollution). `RESULTS_ROOT` can be
+  overridden in CLI (`--results-root PATH`) or YAML (`results_root: /absolute/path`
+  in top level); CLI > YAML > default.
+- **Code reuse.** New `src/cell_analysis/io.py` module: `save_extraction`
+  (write 8 artifacts), `load_extraction` (read + validate + return
+  `ExtractionBundle` dataclass), `compute_provenance` (sha256 of params + file
+  hashes), `provenance_matches` (returns bool, list of drifted field names).
+  `ExtractionBundle` fields: `label_stack`, `nucleus_label_stack`,
+  `tracked_cells`, `track_statistics`, `frame_diagnostics`, `merge_log`,
+  `dropped_frames`, `provenance`. All existing test suites (`test_geometry_scaling`,
+  `test_fate_prediction`, `test_nucleoid_distribution`, etc.) remain green—they
+  exercise `pipeline.py` directly without hitting `io.py`.
+- **Files.** New: `src/cell_analysis/io.py`, `notebooks/extract.ipynb`,
+  updated `notebooks/analysis.ipynb`, `scripts/run_experiment.py` (new flags
+  + runner logic), three YAML configs, `tests/test_extraction_io.py`,
+  `tests/test_provenance.py`, `tests/test_run_experiment.py` (new tests),
+  `tests/test_runner_reuse.py` (new test fixture).
+- **Legacy folder.** Renamed any pre-split `results/` folder to
+  `results_legacy_20260729` to preserve old-layout artifacts for user review
+  without cluttering the new `results/<RUN>/{extraction,analysis}/` structure.
+- **Design / plan.** [`docs/superpowers/specs/2026-07-28-extract-analysis-split-design.md`](superpowers/specs/2026-07-28-extract-analysis-split-design.md),
+  [`docs/superpowers/plans/2026-07-28-extract-analysis-split.md`](superpowers/plans/2026-07-28-extract-analysis-split.md).
