@@ -164,9 +164,16 @@ def test_finalize_extraction_run_writes_bundle(tmp_path):
     assert prov["params"]["GATING_Z_THRESHOLD"] == 3.5
 
 
-def test_finalize_extraction_run_derives_dropped_from_diagnostics(tmp_path):
-    """When diagnostics has flagged frames, dropped_frames.csv should
-    contain exactly those rows — no disk-round-trip needed."""
+@pytest.mark.parametrize("flagged, expected_frames", [
+    ([False, True, True], [1, 2]),
+    ([False, False, False], []),
+])
+def test_finalize_extraction_run_derives_dropped_from_diagnostics(
+    tmp_path, flagged, expected_frames,
+):
+    """dropped_frames.csv is derived from diagnostics[flagged] — no disk
+    round-trip. Bundle-writing itself is covered by
+    test_finalize_extraction_run_writes_bundle above."""
     stack = tmp_path / "phase.tif"
     fluor = tmp_path / "fluor.tif"
     stack.write_bytes(b"a")
@@ -174,7 +181,7 @@ def test_finalize_extraction_run_derives_dropped_from_diagnostics(tmp_path):
     inputs = _tiny_bundle_inputs(stack, fluor)
 
     diagnostics = pd.DataFrame({
-        "frame": [0, 1, 2], "flagged": [False, True, True],
+        "frame": list(range(len(flagged))), "flagged": flagged,
     })
     finalize_extraction_run(
         tmp_path / "run" / "extraction",
@@ -182,27 +189,7 @@ def test_finalize_extraction_run_derives_dropped_from_diagnostics(tmp_path):
         **inputs,
     )
     dropped = pd.read_csv(tmp_path / "run" / "extraction" / "dropped_frames.csv")
-    assert len(dropped) == 2
-    assert list(dropped["frame"]) == [1, 2]
-
-
-def test_finalize_extraction_run_empty_when_no_flagged(tmp_path):
-    stack = tmp_path / "phase.tif"
-    fluor = tmp_path / "fluor.tif"
-    stack.write_bytes(b"a")
-    fluor.write_bytes(b"b")
-    inputs = _tiny_bundle_inputs(stack, fluor)
-
-    diagnostics = pd.DataFrame({
-        "frame": [0, 1], "flagged": [False, False],
-    })
-    finalize_extraction_run(
-        tmp_path / "run" / "extraction",
-        diagnostics=diagnostics,
-        **inputs,
-    )
-    dropped = pd.read_csv(tmp_path / "run" / "extraction" / "dropped_frames.csv")
-    assert len(dropped) == 0
+    assert list(dropped["frame"]) == expected_frames
 
 
 def test_load_extraction_with_stacks_roundtrip(tmp_path):

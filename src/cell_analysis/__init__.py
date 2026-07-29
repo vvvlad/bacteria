@@ -40,6 +40,7 @@ from .io import (
     EXTRACTION_PARAM_NAMES as EXTRACTION_PARAM_NAMES,
     finalize_extraction_run as finalize_extraction_run,
     load_extraction_with_stacks as load_extraction_with_stacks,
+    resolve_provenance_path as resolve_provenance_path,
 )
 from .plotting import (
     PLOT_SOURCES as PLOT_SOURCES,

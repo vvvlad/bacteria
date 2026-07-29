@@ -35,11 +35,7 @@ def resolve_extraction_dir(user_path: Path) -> Path:
     )
 
 
-def resolve_raw_stack(prov_path: str) -> Path:
-    p = Path(prov_path)
-    if p.is_absolute():
-        return p
-    return (REPO_ROOT / prov_path).resolve()
+# (uses resolve_provenance_path from cell_analysis.io)
 
 
 def main():
@@ -76,13 +72,13 @@ def main():
 
     phase_stack = fluor_stack = None
     if not args.no_raw:
-        from cell_analysis.io import load_stack
+        from cell_analysis.io import load_stack, resolve_provenance_path
 
         provenance = json.loads(
             (extraction_dir / "provenance.json").read_text(encoding="utf-8")
         )
-        stack_path = resolve_raw_stack(provenance["stack_path"])
-        fluor_path = resolve_raw_stack(provenance["fluor_path"])
+        stack_path = resolve_provenance_path(provenance["stack_path"], repo_root=REPO_ROOT)
+        fluor_path = resolve_provenance_path(provenance["fluor_path"], repo_root=REPO_ROOT)
         for name, p in [("phase", stack_path), ("fluor", fluor_path)]:
             if not p.exists():
                 print(f"  WARNING: {name} stack not found at {p}; skipping")

@@ -292,6 +292,24 @@ EXTRACTION_PARAM_NAMES = (
 )
 
 
+def resolve_provenance_path(
+    prov_path: str | Path, *, repo_root: Path | None = None,
+) -> Path:
+    """Resolve a `provenance.json` path field to an absolute Path.
+
+    ``compute_provenance`` stores paths as repo-root-relative when the
+    source lives inside ``repo_root``, absolute otherwise. This is the
+    inverse: given the stored string, return the absolute path suitable
+    for `load_stack`, `open()`, etc.
+    """
+    p = Path(prov_path)
+    if p.is_absolute():
+        return p
+    if repo_root is None:
+        return p.resolve()
+    return (Path(repo_root) / prov_path).resolve()
+
+
 def finalize_extraction_run(
     extraction_dir: str | Path, *,
     label_stack: np.ndarray,
@@ -302,7 +320,6 @@ def finalize_extraction_run(
     stack_path: str | Path,
     fluor_path: str | Path,
     repo_root: Path | None = None,
-    package_version: str | None = None,
 ) -> dict:
     """Compute provenance, derive dropped_frames, and save the bundle.
 
@@ -332,7 +349,6 @@ def finalize_extraction_run(
         Path(stack_path).resolve(),
         Path(fluor_path).resolve(),
         repo_root=repo_root,
-        package_version=package_version,
     )
 
     save_extraction(
@@ -356,25 +372,16 @@ def load_extraction_with_stacks(
     Extends :func:`load_extraction` by resolving the ``stack_path`` and
     ``fluor_path`` fields from the provenance JSON (repo-relative when
     the source lives inside ``repo_root``, absolute otherwise) and
-    loading both TIFFs. Multi-channel stacks are squeezed to the first
-    channel so both return values are ``(T, Y, X)``.
+    loading both TIFFs via :func:`load_paired_stacks` (which also
+    validates matching shapes and squeezes multi-channel stacks to
+    ``(T, Y, X)``).
 
     Returns ``(bundle, phase_stack, fluor_stack)``.
     """
     bundle = load_extraction(results_root, run_name)
-
-    def _resolve(prov_path: str) -> Path:
-        p = Path(prov_path)
-        if p.is_absolute():
-            return p
-        if repo_root is None:
-            return p.resolve()
-        return (Path(repo_root) / prov_path).resolve()
-
-    phase_stack = load_stack(_resolve(bundle.provenance["stack_path"]))
-    fluor_stack = load_stack(_resolve(bundle.provenance["fluor_path"]))
-    if phase_stack.ndim == 4:
-        phase_stack = phase_stack[:, 0]
-    if fluor_stack.ndim == 4:
-        fluor_stack = fluor_stack[:, 0]
+    stack_path = resolve_provenance_path(
+        bundle.provenance["stack_path"], repo_root=repo_root)
+    fluor_path = resolve_provenance_path(
+        bundle.provenance["fluor_path"], repo_root=repo_root)
+    phase_stack, fluor_stack = load_paired_stacks(stack_path, fluor_path)
     return bundle, phase_stack, fluor_stack
