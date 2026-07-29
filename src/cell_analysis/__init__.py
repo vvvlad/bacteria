@@ -37,6 +37,9 @@ from .io import (
     load_extraction as load_extraction,
     compute_provenance as compute_provenance,
     provenance_matches as provenance_matches,
+    EXTRACTION_PARAM_NAMES as EXTRACTION_PARAM_NAMES,
+    finalize_extraction_run as finalize_extraction_run,
+    load_extraction_with_stacks as load_extraction_with_stacks,
 )
 from .plotting import (
     PLOT_SOURCES as PLOT_SOURCES,

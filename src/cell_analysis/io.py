@@ -272,3 +272,109 @@ def load_extraction(results_root: str | Path, run_name: str) -> ExtractionBundle
         dropped_frames=_read("dropped_frames.csv"),
         provenance=provenance,
     )
+
+
+
+# --- Notebook-facing helpers -----------------------------------------------
+#
+# These wrap the low-level bundle I/O so the notebooks stay minimal.
+# Notebooks should call these instead of assembling provenance dicts or
+# resolving `provenance.json` paths themselves.
+
+# Canonical list of `extraction:` YAML keys. When you add a new extraction
+# param, update this AND `EXTRACTION_ALLOWED`/`EXTRACTION_TYPES` in
+# scripts/run_experiment.py AND the parameters cell of extract.ipynb.
+EXTRACTION_PARAM_NAMES = (
+    "STACK_PATH", "FLUOR_PATH", "MODEL_TYPE", "DETECT_PARAMS",
+    "GATING_Z_THRESHOLD", "SEARCH_RANGE", "MEMORY",
+    "MERGE_MAX_DISTANCE", "MERGE_MAX_GAP", "MIN_TRACK_DETECTIONS",
+    "NUCLEUS_DIAMETER", "NUCLEUS_MIN_AREA",
+)
+
+
+def finalize_extraction_run(
+    extraction_dir: str | Path, *,
+    label_stack: np.ndarray,
+    nucleus_label_stack: np.ndarray,
+    tracked, track_stats,
+    diagnostics, merge_log,
+    params: dict,
+    stack_path: str | Path,
+    fluor_path: str | Path,
+    repo_root: Path | None = None,
+    package_version: str | None = None,
+) -> dict:
+    """Compute provenance, derive dropped_frames, and save the bundle.
+
+    Called from the last cell of `notebooks/extract.ipynb`. Single source
+    of truth for turning the in-memory pipeline outputs into an on-disk
+    extraction bundle.
+
+    ``params`` should be a dict of the extraction-config values that end
+    up hashed into the provenance — typically built by the caller as
+    ``{k: globals()[k] for k in EXTRACTION_PARAM_NAMES}``.
+
+    ``dropped_frames`` is derived from ``diagnostics[diagnostics["flagged"]]``,
+    matching ``run_frame_gating``'s own logic. An empty-schema DataFrame
+    is used if the ``flagged`` column is absent.
+
+    Returns the provenance dict that was written to disk.
+    """
+    import pandas as pd
+
+    if "flagged" in diagnostics.columns:
+        dropped = diagnostics[diagnostics["flagged"]].copy()
+    else:
+        dropped = pd.DataFrame({"frame": [], "reason": []})
+
+    provenance = compute_provenance(
+        params,
+        Path(stack_path).resolve(),
+        Path(fluor_path).resolve(),
+        repo_root=repo_root,
+        package_version=package_version,
+    )
+
+    save_extraction(
+        extraction_dir,
+        label_stack=label_stack,
+        nucleus_label_stack=nucleus_label_stack,
+        tracked=tracked, track_stats=track_stats,
+        diagnostics=diagnostics, merge_log=merge_log,
+        dropped_frames=dropped,
+        provenance=provenance,
+    )
+    return provenance
+
+
+def load_extraction_with_stacks(
+    results_root: str | Path, run_name: str, *,
+    repo_root: Path | None = None,
+) -> tuple[ExtractionBundle, np.ndarray, np.ndarray]:
+    """Load an extraction bundle *and* its raw phase + fluor stacks.
+
+    Extends :func:`load_extraction` by resolving the ``stack_path`` and
+    ``fluor_path`` fields from the provenance JSON (repo-relative when
+    the source lives inside ``repo_root``, absolute otherwise) and
+    loading both TIFFs. Multi-channel stacks are squeezed to the first
+    channel so both return values are ``(T, Y, X)``.
+
+    Returns ``(bundle, phase_stack, fluor_stack)``.
+    """
+    bundle = load_extraction(results_root, run_name)
+
+    def _resolve(prov_path: str) -> Path:
+        p = Path(prov_path)
+        if p.is_absolute():
+            return p
+        if repo_root is None:
+            return p.resolve()
+        return (Path(repo_root) / prov_path).resolve()
+
+    phase_stack = load_stack(_resolve(bundle.provenance["stack_path"]))
+    fluor_stack = load_stack(_resolve(bundle.provenance["fluor_path"]))
+    if phase_stack.ndim == 4:
+        phase_stack = phase_stack[:, 0]
+    if fluor_stack.ndim == 4:
+        fluor_stack = fluor_stack[:, 0]
+    return bundle, phase_stack, fluor_stack

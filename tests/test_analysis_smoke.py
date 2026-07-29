@@ -28,6 +28,8 @@ def test_notebook_import_surface_is_stable():
     the notebook's first code cell."""
     from cell_analysis import (
         load_extraction, load_stack,
+        load_extraction_with_stacks,
+        EXTRACTION_PARAM_NAMES, finalize_extraction_run,
         add_fluorescence, add_nucleoid_distribution, add_geometry,
         add_fluorescence_concentration, add_sav_ratio,
         add_preburst_fluorescence,
@@ -42,6 +44,8 @@ def test_notebook_import_surface_is_stable():
     for name, obj in [
         ("load_extraction", load_extraction),
         ("load_stack", load_stack),
+        ("load_extraction_with_stacks", load_extraction_with_stacks),
+        ("finalize_extraction_run", finalize_extraction_run),
         ("add_fluorescence", add_fluorescence),
         ("add_nucleoid_distribution", add_nucleoid_distribution),
         ("add_geometry", add_geometry),
@@ -62,6 +66,10 @@ def test_notebook_import_surface_is_stable():
         ("plot_fate_prediction", plot_fate_prediction),
     ]:
         assert callable(obj), f"{name} is not callable"
+    assert isinstance(EXTRACTION_PARAM_NAMES, tuple), (
+        "EXTRACTION_PARAM_NAMES must be a tuple — notebooks iterate it "
+        "to build the params dict passed to finalize_extraction_run."
+    )
 
 
 # ---------------------------------------------------------------------------
