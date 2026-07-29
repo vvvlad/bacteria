@@ -298,14 +298,23 @@ bacteria/
 ├── notebooks/
 │   └── analysis.ipynb        # Analysis notebook (also papermill template)
 ├── results/
-│   └── run_01/               # One folder per run
-│       ├── report.html       # Self-contained HTML report with all plots
-│       ├── config.yaml       # Frozen copy of config used
-│       ├── tracked_cells.csv # Per-cell per-frame data
-│       └── ...               # Other CSV outputs
+│   └── run_01/                       # One folder per run (see "Output artifacts")
+│       ├── config.yaml               # Frozen copy of config used
+│       ├── extraction/               # Image → identities (expensive, cached)
+│       │   ├── provenance.json
+│       │   ├── label_stack.npz       # Phase-contrast Cellpose masks (T,Y,X) int32
+│       │   ├── nucleus_label_stack.npz  # Fluor Cellpose masks
+│       │   └── *.csv                 # tracked_cells, track_statistics, ...
+│       └── analysis/                 # Identities → metrics + plots (fast, iterated)
+│           ├── report.html           # Self-contained HTML report
+│           └── *.csv                 # enriched tracked, fate predictions, ...
+├── docs/                             # Publishing view over results/ (git-trackable)
+│   ├── index.html                    # Landing page listing all runs
+│   └── <run>/report.html             # Report copy with a "back to index" link
 ├── scripts/
-│   ├── run_experiment.py     # CLI runner (papermill + HTML export)
-│   └── diagnostic_overlay.py # Visual debugging of detection filters
+│   ├── run_experiment.py             # Two-phase runner (extraction + analysis)
+│   ├── view_labels.py                # Open a run's label stacks in napari
+│   └── diagnostic_overlay.py         # Visual debugging of detection filters
 ├── src/
 │   └── cell_analysis/
 │       ├── __init__.py
@@ -415,25 +424,108 @@ All parameters are set in the YAML config file (or the notebook's parameters cel
 | `FLUOR_DROP_THRESHOLD` | -0.3 | Fluorescence drop threshold for disappearance detection |
 | `FLUOR_DROP_WINDOW` | 2 | Frames over which to measure cumulative fluorescence drop |
 
-## Output
+## Output artifacts
 
-Each run produces results in `results/<run_name>/`:
+Each run is split across two subfolders under `results/<run_name>/`, matching
+the two phases of the pipeline. Extraction is expensive (Cellpose + tracking)
+and is cached; analysis is fast and re-runs freely as you iterate on plots
+and metrics.
+
+### `results/<run_name>/extraction/` — image → identities
+
+Written by `notebooks/extract.ipynb`. Skipped on subsequent runs when the
+config's extraction section and the source-file hashes still match
+`provenance.json`.
+
+| File | Format | Contents |
+|---|---|---|
+| `provenance.json` | JSON | `{extract_hash, stack_path, fluor_path, stack_sha256, fluor_sha256, params, cell_analysis_version, timestamp_utc}`. `extract_hash` = sha256 of extraction params (excluding `STACK_PATH`/`FLUOR_PATH` strings) + both file sha256s. Runner compares against this to decide reuse vs. re-extract. |
+| `label_stack.npz` | `np.savez_compressed`, key `label_stack` | `(T, Y, X) int32` Cellpose masks on the phase-contrast channel. `0` = background, `N` = per-frame mask id. Bad frames (from gating) are zeroed. |
+| `nucleus_label_stack.npz` | key `nucleus_label_stack` | Same shape, Cellpose masks on the fluorescence channel. |
+| `tracked_cells.csv` | CSV | `frame, track_id, label, centroid_y, centroid_x, area` — post-merge track ids joined with the per-frame `label` (which indexes into `label_stack`). |
+| `track_statistics.csv` | CSV | `track_id, first_frame, last_frame, mean_area, num_detections, lifetime, disappeared` |
+| `frame_diagnostics.csv` | CSV | Per-frame z-score gating stats |
+| `merge_log.csv` | CSV | trackpy → merged track_id remapping |
+| `dropped_frames.csv` | CSV | Bad-frame audit (empty when nothing was dropped) |
+
+### `results/<run_name>/analysis/` — identities → metrics + plots
+
+Written by `notebooks/analysis.ipynb`. Rebuilt every run.
 
 | File | Description |
-|------|-------------|
+|---|---|
 | `report.html` | Self-contained HTML report with all plots and statistics |
-| `config.yaml` | Frozen copy of the YAML config used for this run |
-| `tracked_cells.csv` | Per-cell per-frame: morphology, fluorescence, speed, SA:V ratio |
-| `track_statistics.csv` | Per-track summary: lifetime, growth, fluorescence, migration |
-| `frame_diagnostics.csv` | Per-frame detection statistics and quality gating flags |
-| `merge_log.csv` | Track merging audit log |
-| `fate_predictions.csv` | Per-cell predicted death probability (frame-0 cohort) |
-| `fate_prediction_summary.csv` | Model AUC, accuracy, per-feature coefficients |
-| `spatial_gradient.csv` | Per-cell position with fate and gradient quartile |
-| `spatial_gradient_summary.csv` | Per-axis gradient statistics |
-| `clustering_summary.csv` | Spatial clustering test results |
-| `nucleus_persistence.csv` | Per-frame phase cell vs fluorescence nucleus counts |
-| `nucleus_persistence_summary.csv` | Nucleus persistence conclusion |
+| `tracked_cells.csv` | Enriched per-cell per-frame — adds fluorescence, nucleoid metrics (`cv`, `nnrm`, `mean_edge_distance_norm`, `gaussian_sigma_norm`, `peri_core_asymmetry`), geometry (`radius`, `volume`, `surface_area`, `volume_rel`), `fluor_concentration`, `sav_ratio`. |
+| `track_statistics.csv` | Enriched per-track summary — adds means (`mean_fluor_intensity`, `mean_cv`, etc.) plus pre-burst columns |
+| `fluorescence_alignment.csv` | Long-form table of F(offset)/F(-window) around each disappearing cell |
+| `peri_core_alignment.csv` | Same shape, but for peri/core asymmetry |
+| `nucleus_persistence.csv` | Per-frame phase-cell vs. fluorescence-nucleus counts |
+| `nucleus_persistence_summary.csv` | Endpoint / trajectory test verdict (parallel vs. divergent) |
+| `frame0_fate_comparison.csv` | Frame-0 Mann-Whitney U per feature (survived vs. died) |
+| `fate_predictions.csv` | Per-cell logistic-regression predictions (LOO CV) |
+| `fate_prediction_summary.csv` | AUC, accuracy, feature importances |
+| `fate_predictions_no_area.csv`, `fate_prediction_summary_no_area.csv` | Same LR but with `area` dropped |
+
+`results/<run_name>/config.yaml` is a frozen copy of the YAML config used for the run.
+
+### Overriding the results root
+
+By default, both subfolders live at `<repo>/results/<run_name>/`. To keep
+big `.npz` files out of the repo (e.g. in a cloud-synced folder), set
+`RESULTS_ROOT` at the top level of the config YAML, or pass
+`--results-root PATH` to `run_experiment.py` (CLI wins over YAML).
+
+### Viewing label stacks
+
+The `.npz` files store integer label arrays — one number per pixel
+indicating which cell/nucleus the pixel belongs to. Options for
+inspecting them:
+
+**napari (recommended, one-liner):**
+
+```bash
+uv run python scripts/view_labels.py results/control_experiment/
+```
+
+The script auto-detects the `extraction/` subfolder, loads the raw
+phase + fluor TIFFs (via paths recorded in `provenance.json`), and opens
+a napari viewer with four layers: `phase`, `fluor` (green additive),
+`cells (phase masks)`, and `nuclei (fluor masks)` (hidden by default —
+toggle in the layer list). Scrub the time slider to page through frames.
+
+Skip loading raw TIFFs (faster, useful if the source stacks are on a
+slow/unmounted drive):
+
+```bash
+uv run python scripts/view_labels.py results/control_experiment/ --no-raw
+```
+
+**Python one-liner (matplotlib):**
+
+```python
+import matplotlib.pyplot as plt, numpy as np
+labels = np.load("results/control_experiment/extraction/label_stack.npz")["label_stack"]
+plt.imshow(labels[0], cmap="tab20"); plt.title(f"frame 0 — {labels[0].max()} cells"); plt.show()
+```
+
+**Fiji / ImageJ:** Fiji can't open `.npz` directly, but a one-line
+convert-to-TIFF makes them openable:
+
+```bash
+uv run python -c "
+import numpy as np, tifffile
+labels = np.load('results/control_experiment/extraction/label_stack.npz')['label_stack']
+tifffile.imwrite('/tmp/labels.tif', labels.astype('uint16'))
+print('wrote /tmp/labels.tif —', labels.shape, 'uint16')
+"
+```
+
+Open `/tmp/labels.tif` in Fiji, then **Image → Lookup Tables → glasbey_on_dark**
+(or any categorical LUT) for a colored view. **Image → Adjust →
+Brightness/Contrast → Auto** stretches the range to cover all label ids.
+For overlays on the raw stack, load both and use **Image → Overlay → Add
+Image…** or **Image → Color → Merge Channels…** (labels as a colored
+channel over the phase gray).
 
 ## Diagnostic Overlay
 
