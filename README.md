@@ -315,7 +315,8 @@ bacteria/
 ├── scripts/
 │   ├── run_experiment.py             # Two-phase runner (extraction + analysis)
 │   ├── view_labels.py                # Open a run's label stacks in napari
-│   └── diagnostic_overlay.py         # Visual debugging of detection filters
+│   ├── diagnostic_overlay.py         # Visual debugging of detection filters
+│   └── blind_comparison/             # One-off blind-comparison analysis (report: docs/reports/blind_comparison/)
 ├── src/
 │   └── cell_analysis/
 │       ├── __init__.py
