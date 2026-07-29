@@ -1,0 +1,31 @@
+{
+  "cell_analysis_version": "0.1.0",
+  "extract_hash": "6c4c03b79b519a607b2a71e474e34f8c4b922b12e193f9bc83dedceabd9b2082",
+  "fluor_path": "data/Protein-synthesis-arrested/Grad LB+CAM sucr20-0-TL.zvi  Ch1-BG.tif",
+  "fluor_sha256": "0c6dfc2235111e9b2e938fc461ea2668abcc84672cbb95c4c4ebc8d825ab12e1",
+  "params": {
+    "DETECT_PARAMS": {
+      "diameter": 32,
+      "exclude_edges": true,
+      "gpu": true,
+      "min_area": 300,
+      "min_circularity": 0.7,
+      "min_contrast": 1250,
+      "resample": false
+    },
+    "FLUOR_PATH": "/Users/vvetshte/Projects/temp/experiments_image/data/Protein-synthesis-arrested/Grad LB+CAM sucr20-0-TL.zvi  Ch1-BG.tif",
+    "GATING_Z_THRESHOLD": 3.5,
+    "MEMORY": 3,
+    "MERGE_MAX_DISTANCE": 15.0,
+    "MERGE_MAX_GAP": 18,
+    "MIN_TRACK_DETECTIONS": 4,
+    "MODEL_TYPE": "cyto3",
+    "NUCLEUS_DIAMETER": 25,
+    "NUCLEUS_MIN_AREA": 100,
+    "SEARCH_RANGE": 30.0,
+    "STACK_PATH": "/Users/vvetshte/Projects/temp/experiments_image/data/Protein-synthesis-arrested/Grad LB+CAM sucr20-0-TL.zvi  Ch0.tif"
+  },
+  "stack_path": "data/Protein-synthesis-arrested/Grad LB+CAM sucr20-0-TL.zvi  Ch0.tif",
+  "stack_sha256": "ec75549401bfa4b12723f8952d15c6898092edd0d3c9e68c1586cfac31ca761e",
+  "timestamp_utc": "2026-07-29T05:40:05+00:00"
+}

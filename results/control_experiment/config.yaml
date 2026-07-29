@@ -1,22 +1,40 @@
-RUN_NAME: "control_experiment"
-STACK_PATH: "../data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch0.tif"
-FLUOR_PATH: "../data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch1-BG.tif"
-
-GATING_Z_THRESHOLD: 3.5
-
-DETECT_PARAMS:
-  diameter: 32
-  min_area: 300
-  min_circularity: 0.7
-  min_contrast: 1250
-  exclude_edges: true
-  gpu: true
-  resample: false
-
-SEARCH_RANGE: 30.0
-MEMORY: 3
-MERGE_MAX_DISTANCE: 15.0
-MERGE_MAX_GAP: 18
-MIN_TRACK_DETECTIONS: 4
-
-FLUOR_ALIGN_WINDOW: 3
+RUN_NAME: control_experiment
+extraction:
+  STACK_PATH: ../data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch0.tif
+  FLUOR_PATH: ../data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch1-BG.tif
+  MODEL_TYPE: cyto3
+  DETECT_PARAMS:
+    diameter: 32
+    min_area: 300
+    min_circularity: 0.7
+    min_contrast: 1250
+    exclude_edges: true
+    gpu: true
+    resample: false
+  GATING_Z_THRESHOLD: 3.5
+  SEARCH_RANGE: 30.0
+  MEMORY: 3
+  MERGE_MAX_DISTANCE: 15.0
+  MERGE_MAX_GAP: 18
+  MIN_TRACK_DETECTIONS: 4
+  NUCLEUS_DIAMETER: 25
+  NUCLEUS_MIN_AREA: 100
+analysis:
+  PIXEL_SIZE_UM: 0.0645
+  BASELINE_FRAMES: 3
+  PERI_CORE_RINGS:
+  - 0.15
+  - 0.35
+  - 0.55
+  FLUOR_ALIGN_WINDOW: 5
+  FATE_FEATURES_FULL:
+  - area
+  - cv
+  - nnrm
+  - mean_edge_distance_norm
+  - gaussian_sigma_norm
+  FATE_FEATURES_NO_AREA:
+  - cv
+  - nnrm
+  - mean_edge_distance_norm
+  - gaussian_sigma_norm

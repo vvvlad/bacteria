@@ -1,0 +1,31 @@
+{
+  "cell_analysis_version": "0.1.0",
+  "extract_hash": "42f5a59d0083a3be82b19b2f5afef370b6eafddda69b3064f03741d718b2e52e",
+  "fluor_path": "data/gradient_0011/Gradient-0011.zvi  Ch1-BG.tif",
+  "fluor_sha256": "31700029154230c9fd08c55d1942ea9554d2587802109d8769d5314161eaf4f2",
+  "params": {
+    "DETECT_PARAMS": {
+      "diameter": 32,
+      "exclude_edges": true,
+      "gpu": true,
+      "min_area": 300,
+      "min_circularity": 0.7,
+      "min_contrast": 1250,
+      "resample": false
+    },
+    "FLUOR_PATH": "/Users/vvetshte/Projects/temp/experiments_image/data/gradient_0011/Gradient-0011.zvi  Ch1-BG.tif",
+    "GATING_Z_THRESHOLD": 3.5,
+    "MEMORY": 3,
+    "MERGE_MAX_DISTANCE": 15.0,
+    "MERGE_MAX_GAP": 18,
+    "MIN_TRACK_DETECTIONS": 4,
+    "MODEL_TYPE": "cyto3",
+    "NUCLEUS_DIAMETER": 25,
+    "NUCLEUS_MIN_AREA": 100,
+    "SEARCH_RANGE": 30.0,
+    "STACK_PATH": "/Users/vvetshte/Projects/temp/experiments_image/data/gradient_0011/Gradient-0011.zvi  Ch0.tif"
+  },
+  "stack_path": "data/gradient_0011/Gradient-0011.zvi  Ch0.tif",
+  "stack_sha256": "3b184527b29f6acf0af3f72a9ab5a1190337a521d93720aeb29a24be70069534",
+  "timestamp_utc": "2026-07-29T05:45:46+00:00"
+}
