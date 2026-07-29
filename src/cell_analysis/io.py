@@ -151,7 +151,13 @@ def compute_provenance(
     """
     stack_sha = _sha256_file(stack_path)
     fluor_sha = _sha256_file(fluor_path)
-    params_canonical = json.dumps(extraction_params, sort_keys=True,
+
+    # Path values are stored in extraction_params for audit but excluded from
+    # the hash — file identity is covered by stack_sha256/fluor_sha256 below,
+    # and callers may pass either relative or absolute path strings.
+    params_for_hash = {k: v for k, v in extraction_params.items()
+                       if k not in ("STACK_PATH", "FLUOR_PATH")}
+    params_canonical = json.dumps(params_for_hash, sort_keys=True,
                                   separators=(",", ":"))
     h = hashlib.sha256()
     h.update(params_canonical.encode("utf-8"))

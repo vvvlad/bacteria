@@ -23,6 +23,7 @@ NOTEBOOK_ANALYSIS = REPO_ROOT / "notebooks" / "analysis.ipynb"
 EXTRACTION_ARTIFACTS = (
     "provenance.json", "label_stack.npz", "nucleus_label_stack.npz",
     "tracked_cells.csv", "track_statistics.csv",
+    "frame_diagnostics.csv", "merge_log.csv", "dropped_frames.csv",
 )
 
 TOP_LEVEL_ALLOWED = {"RUN_NAME", "RESULTS_ROOT", "extraction", "analysis"}
@@ -151,8 +152,13 @@ def extraction_is_stale(extraction_dir: Path, extraction_params: dict,
 
 
 def _run_notebook(notebook_path: Path, parameters: dict,
-                  out_html: Path | None) -> Path:
-    """Execute *notebook_path* with papermill, returning path to executed .ipynb."""
+                  out_html: Path | None) -> None:
+    """Execute *notebook_path* with papermill.
+
+    Writes an HTML export to *out_html* when non-None. The papermill tmp
+    notebook is unlinked before returning; there is no useful path to hand
+    back to the caller.
+    """
     kernel_name = read_kernel_name(notebook_path)
     tmp = tempfile.NamedTemporaryFile(suffix=".ipynb", delete=False)
     tmp_path = Path(tmp.name)
@@ -166,7 +172,6 @@ def _run_notebook(notebook_path: Path, parameters: dict,
     if out_html is not None:
         export_notebook_html(tmp_path, out_html)
     tmp_path.unlink(missing_ok=True)
-    return tmp_path
 
 def run_single_config(config_path, *, force_extract=False,
                       skip_analysis=False, analysis_only=False,

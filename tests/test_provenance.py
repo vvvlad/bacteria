@@ -119,3 +119,23 @@ def test_repo_relative_paths_in_subdirectory(tmp_path):
     prov = compute_provenance(PARAMS, a, b, repo_root=tmp_path)
     assert prov["stack_path"] == "data/Control-experiment/phase.tif"
     assert prov["fluor_path"] == "data/Control-experiment/fluor.tif"
+
+
+
+def test_extract_hash_ignores_path_values(stacks):
+    a, b = stacks
+    # Same file bytes, different string representations of the same file.
+    p_rel = compute_provenance(
+        {**PARAMS, "STACK_PATH": "../data/a.tif", "FLUOR_PATH": "../data/b.tif"},
+        a, b,
+    )
+    p_abs = compute_provenance(
+        {**PARAMS, "STACK_PATH": str(a), "FLUOR_PATH": str(b)},
+        a, b,
+    )
+    # The path *strings* differ, but the file bytes are the same →
+    # extract_hash must match, so runner+notebook agree on reuse.
+    assert p_rel["extract_hash"] == p_abs["extract_hash"]
+    # Both provenance dicts preserve the original path string for audit.
+    assert p_rel["params"]["STACK_PATH"] == "../data/a.tif"
+    assert p_abs["params"]["STACK_PATH"] == str(a)
