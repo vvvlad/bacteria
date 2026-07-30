@@ -20,35 +20,65 @@ because the first is slow (~10–20 min of Cellpose) and the second is
 fast (~15 s of plotting), so you'll iterate on the second one all day
 without paying for the first.
 
-```
-                       ┌─────────────────────────────┐
-   phase.tif (T,Y,X)   │  extract.ipynb              │
-   fluor.tif (T,Y,X)   │  ───────────────────────    │
-        │              │  Cellpose (phase → masks)   │    ┌─────────────────────┐
-        └──────────────▶ frame-quality gating        ├───▶│  extraction/        │
-                       │  trackpy linking + merging  │    │    label_stack.npz  │
-                       │  Cellpose (fluor → nuclei)  │    │    nucleus_labels…  │
-                       │                             │    │    tracked_cells.csv│
-                       └─────────────────────────────┘    │    provenance.json  │
-                                                          └─────────┬───────────┘
-                                                                    │
-                       ┌─────────────────────────────┐               │
-                       │  analysis.ipynb             │◀──────────────┘
-                       │  ───────────────────────    │
-                       │  fluorescence per cell      │     ┌─────────────────────┐
-                       │  nucleoid metrics           │     │  analysis/          │
-                       │  geometry (µm units)        │────▶│    tracked_cells.csv│
-                       │  fluorescence alignment     │     │    fate_predictions.│
-                       │  fate prediction (LR)       │     │    report.html      │
-                       │  all plots                  │     └─────────────────────┘
-                       └─────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph raw ["raw inputs"]
+        direction TB
+        P["phase.tif<br/>(T,Y,X)"]
+        F["fluor.tif<br/>(T,Y,X)"]
+    end
+    subgraph ext ["extract.ipynb — slow, cached"]
+        direction TB
+        E1["Cellpose · phase → cell masks"]
+        E2["Frame-quality gating"]
+        E3["Trackpy linking + fragment merging"]
+        E4["Cellpose · fluor → nucleus masks"]
+        E1 --> E2 --> E3
+    end
+    subgraph extdir ["<code>extraction/</code> (identities only)"]
+        direction TB
+        A1["label_stack.npz"]
+        A2["nucleus_label_stack.npz"]
+        A3["tracked_cells.csv"]
+        A4["provenance.json"]
+    end
+    subgraph an ["analysis.ipynb — fast, rebuilt each run"]
+        direction TB
+        N1["Measure intensity inside masks<br/>(mean, CV, nNRM, peri/core)"]
+        N2["Geometry (µm)"]
+        N3["Alignment tables"]
+        N4["Fate prediction (LR)"]
+        N1 --> N2 --> N3 --> N4
+    end
+    subgraph andir ["<code>analysis/</code>"]
+        direction TB
+        O1["report.html"]
+        O2["enriched CSVs"]
+    end
+    P --> E1
+    F --> E4
+    E3 --> A1
+    E3 --> A3
+    E4 --> A2
+    E3 --> A4
+    extdir -- "masks + track ids" --> N1
+    F -- "raw pixel intensities" --> N1
+    N4 --> O1
+    N4 --> O2
 ```
 
-The **extraction** phase produces raw per-cell identities (which pixel
-belongs to which cell in which frame). The **analysis** phase computes
-everything you'd actually put in a paper — fluorescence dynamics,
-morphology, fate prediction, etc. — from those identities plus the raw
-images.
+The **extraction** phase does all the segmentation and tracking — the
+heavy image-processing work. Its output is *identities only*: which
+pixels belong to which cell in which frame, and how those cells link
+across time. It stores those identities as label stacks and CSVs; it
+does **not** copy pixel intensities into the bundle.
+
+The **analysis** phase never runs Cellpose or trackpy. It reads the
+extraction bundle for the masks and track ids, and re-opens
+`fluor.tif` to pull the raw pixel values *inside* those masks —
+that's where fluorescence, CV, nNRM, and the peri/core asymmetry come
+from. Everything else (geometry, alignment tables, fate prediction) is
+just arithmetic on that per-cell-per-frame table.
 
 Because extraction outputs are cached and content-hashed, the runner
 only re-runs Cellpose when you change something that would affect it
@@ -533,10 +563,29 @@ failed.
 | `--skip-analysis` | Run extraction only. Useful when pre-baking extractions across many datasets. |
 | `--analysis-only` | Skip extraction; error if artifacts are missing. If the provenance hash drifted, prints a warning listing the drifted fields but proceeds. |
 | `--results-root PATH` | Override the results root for this invocation. Wins over YAML `RESULTS_ROOT`. Handy for redirecting to a cloud-synced folder. |
+| `--fluor-root PATH` | Extra directory to search for the raw TIFFs when the path recorded in `provenance.json` doesn't resolve on the current machine. Repeatable. Also honors `EXPERIMENTS_IMAGE_FLUOR_ROOTS` (`os.pathsep`-separated). Use when doing extraction on one machine and analysis on another. |
 
 ### How extraction reuse decides
 
-On every run, before touching extraction:
+On every run, before touching extraction, the runner walks these
+checks in order:
+
+```mermaid
+flowchart TD
+    Start(["Runner starts"]) --> Q1{"<code>provenance.json</code><br/>exists?"}
+    Q1 -- no --> R1["Re-extract<br/><em>reason: missing provenance</em>"]
+    Q1 -- yes --> Q2{"All 8 artifacts<br/>on disk?"}
+    Q2 -- no --> R2["Re-extract<br/><em>reason: missing artifacts</em>"]
+    Q2 -- yes --> Q3{"Stored hash ==<br/>fresh hash?"}
+    Q3 -- no --> R3["Re-extract<br/><em>reason: params drifted<br/>(fields listed)</em>"]
+    Q3 -- yes --> Reuse(["Reuse cached extraction<br/><code>reusing extraction at …</code>"])
+    R1 --> Analysis(["Run analysis"])
+    R2 --> Analysis
+    R3 --> Analysis
+    Reuse --> Analysis
+```
+
+In prose, the same checks:
 
 - If `provenance.json` is missing → **re-extract** (nothing to reuse).
 - If any of the 8 expected artifacts is missing → **re-extract**.
@@ -555,6 +604,52 @@ The hash does **not** cover extraction *code* — if you edit
 re-do the work. This is a deliberate tradeoff: hashing code would
 invalidate every cached extraction on every minor edit, which is worse
 than the occasional manual force.
+
+### Running extraction and analysis on different machines
+
+A common setup is to do the GPU-heavy extraction on one machine (a
+workstation with Cellpose + CUDA/MPS) and the fast analysis on another
+(a laptop). Two things make this work:
+
+- The extraction bundle under `<run>/extraction/` is self-describing —
+  `provenance.json` records the hashes and paths of the raw TIFFs used
+  at extraction time.
+- Analysis still needs to re-read `fluor.tif` (it measures pixel
+  intensities inside the extraction's masks — the bundle stores masks,
+  not intensities). So the fluorescence TIFF must be reachable on the
+  analysis machine.
+
+**Machine 1 (extraction).** Do extraction as usual — optionally with
+`--skip-analysis` if you don't want to render a report on this machine:
+
+```bash
+uv run python scripts/run_experiment.py --skip-analysis configs/my_run.yaml
+```
+
+Sync `<run>/{extraction/, config.yaml}` and the raw TIFFs to machine 2.
+Any transport works: rsync, Dropbox, S3, sneakernet.
+
+**Machine 2 (analysis).** If machine 2 stores the raw TIFFs at a
+different path from machine 1 (typical), point at the local directory
+with `--fluor-root`:
+
+```bash
+uv run python scripts/run_experiment.py \
+    --analysis-only \
+    --fluor-root /local/microscope-data \
+    configs/my_run.yaml
+```
+
+The analysis notebook first tries the path recorded in provenance;
+when that misses, it looks for a file with the same basename under
+each `--fluor-root`, and fails with every path it tried if nothing
+resolves. The flag is repeatable (`--fluor-root A --fluor-root B`)
+and also honors the `EXPERIMENTS_IMAGE_FLUOR_ROOTS` env var
+(`os.pathsep`-separated, i.e. `:` on macOS/Linux and `;` on Windows).
+
+Only `fluor.tif` is a hard requirement — if `phase.tif` isn't
+reachable, the analysis prints a warning and skips the one plot that
+needs it (`plot_channels_preview`); everything else runs unchanged.
 
 ---
 

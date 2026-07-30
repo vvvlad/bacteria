@@ -363,25 +363,104 @@ def finalize_extraction_run(
     return provenance
 
 
+FLUOR_ROOT_ENV = "EXPERIMENTS_IMAGE_FLUOR_ROOTS"
+
+
+def _effective_fluor_roots(
+    fluor_roots: list[str | Path] | tuple[str | Path, ...] | None,
+) -> list[Path]:
+    import os
+    roots: list[Path] = []
+    if fluor_roots:
+        roots.extend(Path(r) for r in fluor_roots)
+    env_val = os.environ.get(FLUOR_ROOT_ENV, "")
+    if env_val:
+        roots.extend(Path(r) for r in env_val.split(os.pathsep) if r)
+    return roots
+
+
+def _resolve_raw_path(
+    recorded: str,
+    *,
+    fluor_roots: list[Path],
+    repo_root: Path | None,
+) -> tuple[Path | None, list[Path]]:
+    tried: list[Path] = []
+    primary = resolve_provenance_path(recorded, repo_root=repo_root)
+    tried.append(primary)
+    if primary.exists():
+        return primary, tried
+    basename = Path(recorded).name
+    for root in fluor_roots:
+        candidate = (Path(root) / basename).resolve()
+        tried.append(candidate)
+        if candidate.exists():
+            return candidate, tried
+    return None, tried
+
+
 def load_extraction_with_stacks(
     results_root: str | Path, run_name: str, *,
     repo_root: Path | None = None,
-) -> tuple[ExtractionBundle, np.ndarray, np.ndarray]:
+    fluor_roots: list[str | Path] | tuple[str | Path, ...] | None = None,
+) -> tuple[ExtractionBundle, np.ndarray | None, np.ndarray]:
     """Load an extraction bundle *and* its raw phase + fluor stacks.
 
-    Extends :func:`load_extraction` by resolving the ``stack_path`` and
-    ``fluor_path`` fields from the provenance JSON (repo-relative when
-    the source lives inside ``repo_root``, absolute otherwise) and
-    loading both TIFFs via :func:`load_paired_stacks` (which also
-    validates matching shapes and squeezes multi-channel stacks to
-    ``(T, Y, X)``).
+    Resolves ``stack_path`` and ``fluor_path`` from provenance in this
+    order:
 
-    Returns ``(bundle, phase_stack, fluor_stack)``.
+    1. As recorded, resolved against ``repo_root`` when relative.
+    2. ``{root}/{basename}`` for each entry in ``fluor_roots`` and the
+       ``EXPERIMENTS_IMAGE_FLUOR_ROOTS`` env var (``os.pathsep``-split).
+    3. Fail on total miss for fluor (analysis needs pixel values inside
+       the masks). Warn (don't raise) on total miss for phase — only
+       ``plot_channels_preview`` uses it, and its cell should guard
+       against ``phase_stack is None``.
+
+    Returns ``(bundle, phase_stack_or_None, fluor_stack)``.
     """
+    import warnings
+
     bundle = load_extraction(results_root, run_name)
-    stack_path = resolve_provenance_path(
-        bundle.provenance["stack_path"], repo_root=repo_root)
-    fluor_path = resolve_provenance_path(
-        bundle.provenance["fluor_path"], repo_root=repo_root)
-    phase_stack, fluor_stack = load_paired_stacks(stack_path, fluor_path)
+    roots = _effective_fluor_roots(fluor_roots)
+
+    fluor_resolved, fluor_tried = _resolve_raw_path(
+        bundle.provenance["fluor_path"],
+        fluor_roots=roots, repo_root=repo_root)
+    if fluor_resolved is None:
+        tried_str = "\n  ".join(str(p) for p in fluor_tried)
+        raise FileNotFoundError(
+            f"Could not resolve fluor stack. Tried:\n  {tried_str}\n"
+            f"Set --fluor-root PATH (or ${FLUOR_ROOT_ENV}) to a directory "
+            f"containing '{Path(bundle.provenance['fluor_path']).name}'."
+        )
+
+    phase_resolved, phase_tried = _resolve_raw_path(
+        bundle.provenance["stack_path"],
+        fluor_roots=roots, repo_root=repo_root)
+
+    fluor_stack = load_stack(fluor_resolved)
+    if fluor_stack.ndim == 4:
+        fluor_stack = fluor_stack[:, 0]
+
+    if phase_resolved is None:
+        tried_str = ", ".join(str(p) for p in phase_tried)
+        warnings.warn(
+            f"Phase stack not found (tried {tried_str}); phase-dependent "
+            f"plots will be skipped.",
+            RuntimeWarning, stacklevel=2,
+        )
+        return bundle, None, fluor_stack
+
+    phase_stack = load_stack(phase_resolved)
+    if phase_stack.ndim == 4:
+        phase_stack = phase_stack[:, 0]
+
+    if phase_stack.shape != fluor_stack.shape:
+        raise ValueError(
+            f"Shape mismatch: phase {phase_stack.shape} vs "
+            f"fluorescence {fluor_stack.shape}. Both stacks must have "
+            f"identical (T, Y, X) dimensions."
+        )
+
     return bundle, phase_stack, fluor_stack

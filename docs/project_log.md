@@ -1084,3 +1084,39 @@ Cellpose segmentation and tracking.
   without cluttering the new `results/<RUN>/{extraction,analysis}/` structure.
 - **Design / plan.** [`docs/superpowers/specs/2026-07-28-extract-analysis-split-design.md`](superpowers/specs/2026-07-28-extract-analysis-split-design.md),
   [`docs/superpowers/plans/2026-07-28-extract-analysis-split.md`](superpowers/plans/2026-07-28-extract-analysis-split.md).
+
+### Cross-machine extract/analyze workflow (2026-07-30)
+
+Enable running extraction on one machine (workstation with GPU-backed
+Cellpose) and analysis on another (laptop) without either machine
+needing the other's filesystem layout.
+
+- **`--fluor-root PATH` CLI flag** (`scripts/run_experiment.py`,
+  repeatable). Fallback directories for raw TIFFs when the path
+  recorded in `provenance.json` doesn't resolve on the current machine.
+  Also honors env var `EXPERIMENTS_IMAGE_FLUOR_ROOTS` (`os.pathsep`-
+  separated). Passed to the analysis notebook as papermill parameter
+  `FLUOR_ROOTS`.
+- **Resolution order in `load_extraction_with_stacks`
+  (`src/cell_analysis/io.py`).** (1) Recorded path, resolved against
+  `repo_root` when relative. (2) `{root}/{basename}` for each entry in
+  the merged `fluor_roots` list. (3) Fail on total miss for
+  `fluor.tif` with an error listing every path tried. For
+  `phase.tif`, a total miss emits a `RuntimeWarning` and returns
+  `None` — analysis proceeds and only skips `plot_channels_preview`.
+- **`--analysis-only` no longer crashes when raw stacks aren't
+  locally reachable.** Drift check catches `FileNotFoundError` from
+  `_sha256_file` and prints a note ("raw stacks not locally reachable;
+  skipping extraction-drift check") instead. Machine 2 can run analysis
+  without a copy of the raw stack.
+- **Version-drift warning.** Analysis notebook's load cell compares
+  the local `cell_analysis` version against
+  `provenance["cell_analysis_version"]` and prints a warning if they
+  differ.
+- **Files.** Updated: `src/cell_analysis/io.py`,
+  `scripts/run_experiment.py`, `notebooks/analysis.ipynb`. New:
+  `tests/test_cross_machine_paths.py` (7 tests covering recorded-path
+  happy path, basename fallback, env-var equivalence, multi-entry env,
+  arg-list priority, error message contents, phase-missing warning).
+- **Design.** `docs/superpowers/specs/2026-07-28-extract-analysis-split-design.md`
+  §"Cross-machine workflow".

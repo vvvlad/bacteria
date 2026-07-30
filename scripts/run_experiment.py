@@ -176,7 +176,8 @@ def _run_notebook(notebook_path: Path, parameters: dict,
 
 def run_single_config(config_path, *, force_extract=False,
                       skip_analysis=False, analysis_only=False,
-                      results_root_override=None) -> bool:
+                      results_root_override=None,
+                      fluor_roots=None) -> bool:
     config_path = Path(config_path).resolve()
     cfg = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     validate_config(cfg)
@@ -223,13 +224,19 @@ def run_single_config(config_path, *, force_extract=False,
             raise FileNotFoundError(
                 f"--analysis-only requested but no extraction at "
                 f"{extraction_dir}")
-        # Warn (don't block) if the extraction on disk drifted from the
-        # config's current `extraction:` section.
-        stale, reason = extraction_is_stale(
-            extraction_dir, cfg["extraction"], stack_path, fluor_path)
-        if stale:
-            print(f"  WARNING: --analysis-only against stale extraction "
-                  f"({reason}). Analysis will run against on-disk artifacts.")
+        # Drift check is best-effort on --analysis-only: it requires
+        # sha256'ing the raw TIFFs, which may not be locally reachable
+        # on machine2. Skip with a note if we can't reach them.
+        try:
+            stale, reason = extraction_is_stale(
+                extraction_dir, cfg["extraction"], stack_path, fluor_path)
+            if stale:
+                print(f"  WARNING: --analysis-only against stale "
+                      f"extraction ({reason}). Analysis will run against "
+                      f"on-disk artifacts.")
+        except FileNotFoundError:
+            print("  NOTE: raw stacks not locally reachable; "
+                  "skipping extraction-drift check.")
 
     if not skip_analysis:
         analysis_dir.mkdir(parents=True, exist_ok=True)
@@ -237,9 +244,11 @@ def run_single_config(config_path, *, force_extract=False,
             NOTEBOOK_ANALYSIS,
             {**cfg.get("analysis", {}),
              "RUN_NAME": run_name,
-             "RESULTS_ROOT": str(results_root)},
+             "RESULTS_ROOT": str(results_root),
+             "FLUOR_ROOTS": [str(r) for r in (fluor_roots or [])]},
             out_html=analysis_dir / "report.html",
         )
+
 
     shutil.copy(config_path, run_dir / "config.yaml")
     return True
@@ -322,6 +331,12 @@ def main():
     parser.add_argument("--skip-analysis", action="store_true")
     parser.add_argument("--analysis-only", action="store_true")
     parser.add_argument("--results-root")
+    parser.add_argument(
+        "--fluor-root", action="append", default=[], metavar="PATH",
+        help="Fallback directory for raw TIFFs when the path recorded in "
+             "provenance doesn't resolve locally. Repeatable. Also honors "
+             "EXPERIMENTS_IMAGE_FLUOR_ROOTS (os.pathsep-separated).",
+    )
     args = parser.parse_args()
 
     if args.skip_analysis and args.analysis_only:
@@ -350,6 +365,7 @@ def main():
                 skip_analysis=args.skip_analysis,
                 analysis_only=args.analysis_only,
                 results_root_override=args.results_root,
+                fluor_roots=args.fluor_root,
             )
             with open(path) as f:
                 run_name = yaml.safe_load(f)["RUN_NAME"]
