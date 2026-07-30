@@ -321,6 +321,18 @@ def publish_reports():
 </html>"""
 
     (docs_dir / "index.html").write_text(html, encoding="utf-8")
+
+    # GitHub Pages can only be pointed at repo root or /docs, not deeper.
+    # Write a tiny redirect at docs/index.html so the Pages URL doesn't
+    # 404 — the real listing lives at docs/reports/index.html.
+    redirect = (
+        "<!DOCTYPE html>\n<meta charset=\"utf-8\">\n"
+        "<meta http-equiv=\"refresh\" content=\"0; url=reports/index.html\">\n"
+        "<title>Experiment Reports</title>\n"
+        "<p>Redirecting to <a href=\"reports/index.html\">reports/</a>…</p>\n"
+    )
+    (REPO_ROOT / "docs" / "index.html").write_text(redirect, encoding="utf-8")
+
     print(f"Published {len(runs)} reports to docs/reports/")
 
 
