@@ -1,7 +1,7 @@
 {
   "cell_analysis_version": "0.1.0",
   "extract_hash": "d0ca696f365e51907c495f97fe538e154c7f150ce2cf0fa27ea39dea4a9db6b6",
-  "fluor_path": "data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch1-BG.tif",
+  "fluor_path": "data\\Control-experiment\\Grad LB+sucr-20-0.zvi  Ch1-BG.tif",
   "fluor_sha256": "17ad0de461396eacdc49e7dcaf76475f5deedf31710a7b89d036d3f44923bd2d",
   "params": {
     "DETECT_PARAMS": {
@@ -13,7 +13,7 @@
       "min_contrast": 1250,
       "resample": false
     },
-    "FLUOR_PATH": "/Users/vvetshte/Projects/temp/experiments_image/data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch1-BG.tif",
+    "FLUOR_PATH": "../data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch1-BG.tif",
     "GATING_Z_THRESHOLD": 3.5,
     "MEMORY": 3,
     "MERGE_MAX_DISTANCE": 15.0,
@@ -23,9 +23,9 @@
     "NUCLEUS_DIAMETER": 25,
     "NUCLEUS_MIN_AREA": 100,
     "SEARCH_RANGE": 30.0,
-    "STACK_PATH": "/Users/vvetshte/Projects/temp/experiments_image/data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch0.tif"
+    "STACK_PATH": "../data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch0.tif"
   },
-  "stack_path": "data/Control-experiment/Grad LB+sucr-20-0.zvi  Ch0.tif",
+  "stack_path": "data\\Control-experiment\\Grad LB+sucr-20-0.zvi  Ch0.tif",
   "stack_sha256": "0346e987306b38fd1a113cd588270e00604fa4fe94ad47b114130d97862d79b6",
-  "timestamp_utc": "2026-07-30T09:08:14+00:00"
+  "timestamp_utc": "2026-08-17T06:39:10+00:00"
 }

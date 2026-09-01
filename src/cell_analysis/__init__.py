@@ -47,6 +47,9 @@ from .plotting import (
     show_with_source as show_with_source,
     plot_area_distribution as plot_area_distribution,
     plot_cells_per_frame as plot_cells_per_frame,
+    plot_cells_per_concenration as plot_cells_per_concenration,
+    plot_burst_conc_all_metrics as plot_burst_conc_all_metrics,
+    check_frames_quality as check_frames_quality,
     plot_channels_preview as plot_channels_preview,
     plot_fate_prediction as plot_fate_prediction,
     plot_detections as plot_detections,
@@ -64,6 +67,7 @@ from .plotting import (
     plot_relative_fluorescence as plot_relative_fluorescence,
     plot_sav_ratio as plot_sav_ratio,
     plot_swelling_dynamics as plot_swelling_dynamics,
+    plot_swelling_per_conc as plot_swelling_per_conc,
     plot_swelling_vs_survival as plot_swelling_vs_survival,
     plot_initial_features_vs_lifespan as plot_initial_features_vs_lifespan,
 )
