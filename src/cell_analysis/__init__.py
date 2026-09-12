@@ -70,4 +70,6 @@ from .plotting import (
     plot_swelling_per_conc as plot_swelling_per_conc,
     plot_swelling_vs_survival as plot_swelling_vs_survival,
     plot_initial_features_vs_lifespan as plot_initial_features_vs_lifespan,
+    plot_tension as plot_tension,
+    plot_tension_comparison as plot_tension_comparison,
 )

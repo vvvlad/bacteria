@@ -42,6 +42,8 @@ PLOT_SOURCES: dict[str, list[str]] = {
         "nucleus_persistence.csv", "nucleus_persistence_summary.csv",
     ],
     "plot_initial_features_vs_lifespan": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_tension": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_tension_comparison": ["tracked_cells.csv", "track_statistics.csv", "tracked_cells.csv", "track_statistics.csv"],
 }
 
 
@@ -355,32 +357,45 @@ def plot_cells_per_frame(tracked):
 
 def plot_cells_per_concenration(tracked):
     """Plot tracked cell count over concenration with 50% disappearance marker."""
+    max_conc = tracked["Sucr %"].max()
+    frames_with_max_conc = tracked[tracked["Sucr %"] == max_conc]["frame"].unique()
+    start_frame = frames_with_max_conc.max()
 
-    tracked_filtered = tracked[tracked["frame"] >= 2]
-    cells_per_concenration = tracked_filtered.groupby("Sucr %")["track_id"].nunique()
-    initial_count = cells_per_concenration.iloc[0]
-    final_count = cells_per_concenration.iloc[-1]
+    tracked_filtered = tracked[tracked["frame"] >= start_frame]
+
+    frame_stats = tracked_filtered.groupby("frame").agg(
+        cell_count=("track_id", "nunique"),
+        sucr_conc=("Sucr %", "mean") 
+    ).reset_index()
+
+    initial_count = frame_stats["cell_count"].iloc[0]
+    final_count = frame_stats["cell_count"].iloc[-1]
     half_count = initial_count / 2
     fraction_disappeared = (initial_count - final_count) / initial_count
 
-    conc_below_half = cells_per_concenration[cells_per_concenration <= half_count]
+    frames_below_half = frame_stats[frame_stats["cell_count"] <= half_count]
     conc_50pct = (
-        int(conc_below_half.index[0]) if len(conc_below_half) > 0 else None
+        frames_below_half["sucr_conc"].iloc[0] if len(frames_below_half) > 0 else None
     )
-
+    frame_stats = frame_stats.sort_values(by="sucr_conc", ascending=False)
     fig = go.Figure()
+    
     fig.add_trace(go.Scatter(
-        x=list(cells_per_concenration.index), y=list(cells_per_concenration.values),
+        x=frame_stats["sucr_conc"], 
+        y=frame_stats["cell_count"],
+        customdata=frame_stats["frame"], 
         mode="lines+markers", line=dict(color="steelblue", width=2),
         marker=dict(size=6), name="Cell count",
-        hovertemplate="Sucr %{x}<br>Count %{y}<extra></extra>",
+        hovertemplate="Frame: %{customdata}<br>Sucr: %{x}%<br>Count: %{y}<extra></extra>",
     ))
+    
     fig.add_hline(
         y=half_count, line=dict(color="red", dash="dash", width=1),
         opacity=0.6,
         annotation_text=f"50% of initial ({half_count:.0f})",
         annotation_position="top right",
     )
+    
     if conc_50pct is not None:
         fig.add_vline(
             x=conc_50pct, line=dict(color="red", dash="dot", width=1),
@@ -390,30 +405,44 @@ def plot_cells_per_concenration(tracked):
             x=conc_50pct, y=half_count,
             ax=conc_50pct + 1, ay=half_count + 15,
             xref="x", yref="y", axref="x", ayref="y",
-            text=f"50% at {conc_50pct} conc",
+            text=f"50% at ~{conc_50pct:.1f}% conc",
             showarrow=True, arrowhead=2, arrowcolor="red",
             font=dict(color="red", size=12),
         )
+        
     fig.update_layout(
         title="Cells detected vs Sucrose Concentration",
         xaxis=dict(title="Sucrose Concentration (%)", autorange="reversed"),
         yaxis=dict(title="Cell count"),
     )
-    _finalize_plotly(fig, height=500)
+    
+    try:
+        _finalize_plotly(fig, height=500)
+    except NameError:
+        fig.show()
 
-    print(f"Initial count (at {cells_per_concenration.index[0]}): {initial_count}")
-    print(f"Final count (at {cells_per_concenration.index[-1]}): {final_count}")
+    print(f"Gradient starts decreasing after frame: {start_frame}")
+    print(f"Initial count (at {frame_stats['sucr_conc'].iloc[0]:.1f}%): {initial_count}")
+    print(f"Final count (at {frame_stats['sucr_conc'].iloc[-1]:.1f}%): {final_count}")
     print(f"Fraction disappeared: {fraction_disappeared:.1%}")
+    
     if conc_50pct is not None:
-        print(f"50% disappearance at concentration: {conc_50pct}")
+        print(f"50% disappearance at concentration: {conc_50pct:.1f}%")
     else:
         print("50% disappearance not reached within the stack")
 
 
-def plot_lifetime_distribution(track_stats):
+def plot_lifetime_distribution(track_stats, min_frame = 0, max_frame = None):
     """Show track lifetime histogram and disappearances per frame."""
 
-    last_frame = track_stats["last_frame"].max()
+    if max_frame is None:
+        max_frame = track_stats["last_frame"].max()
+
+    track_stats = track_stats[
+        (track_stats["first_frame"] >= min_frame) & 
+        (track_stats["last_frame"] <= max_frame)
+    ].copy()
+    
     disappeared = track_stats[track_stats["disappeared"]].sort_values("last_frame")
     survivors = track_stats[~track_stats["disappeared"]]
     fraction_survived = len(survivors) / len(track_stats)
@@ -431,44 +460,45 @@ def plot_lifetime_distribution(track_stats):
         subplot_titles=("Track lifetime distribution", "Disappearances per frame"),
         horizontal_spacing=0.1,
     )
+    if len(track_stats) > 0:
+        median_life = track_stats["lifetime"].median()
+        fig.add_trace(go.Histogram(
+            x=track_stats["lifetime"], nbinsx=int(max_frame - min_frame + 2),
+            marker_color="steelblue", marker_line_color="white",
+            marker_line_width=1, name="Lifetime",
+            hovertemplate="Lifetime %{x}<br>Count %{y}<extra></extra>",
+        ), row=1, col=1)
+        fig.add_vline(
+            x=median_life, line=dict(color="red", dash="dash"),
+            annotation_text=f"Median: {median_life:.0f}",
+            annotation_position="top right",
+            row=1, col=1,
+        )
 
-    median_life = track_stats["lifetime"].median()
-    fig.add_trace(go.Histogram(
-        x=track_stats["lifetime"], nbinsx=int(last_frame + 2),
-        marker_color="steelblue", marker_line_color="white",
-        marker_line_width=1, name="Lifetime",
-        hovertemplate="Lifetime %{x}<br>Count %{y}<extra></extra>",
-    ), row=1, col=1)
-    fig.add_vline(
-        x=median_life, line=dict(color="red", dash="dash"),
-        annotation_text=f"Median: {median_life:.0f}",
-        annotation_position="top right",
-        row=1, col=1,
-    )
-
-    disappearances = disappeared.groupby("last_frame").size()
-    disappearances = disappearances.reindex(range(last_frame + 1), fill_value=0)
-    fig.add_trace(go.Bar(
-        x=list(disappearances.index), y=list(disappearances.values),
-        marker_color="steelblue", marker_line_color="white",
-        marker_line_width=1, name="Disappeared",
-        hovertemplate="Frame %{x}<br>Lost %{y}<extra></extra>",
-    ), row=1, col=2)
-    peak_frame = int(disappearances.idxmax())
-    peak_count = int(disappearances.max())
-    fig.add_annotation(
-        x=peak_frame, y=peak_count,
-        ax=peak_frame + 1.5, ay=peak_count + 2,
-        xref="x2", yref="y2", axref="x2", ayref="y2",
-        text=f"Peak: frame {peak_frame} ({peak_count} cells)",
-        showarrow=True, arrowhead=2, arrowcolor="red",
-        font=dict(color="red", size=12),
-    )
+    if len(disappeared) > 0:
+        disappearances = disappeared.groupby("last_frame").size()
+        disappearances = disappearances.reindex(range(min_frame, max_frame + 1), fill_value=0)
+        fig.add_trace(go.Bar(
+            x=list(disappearances.index), y=list(disappearances.values),
+            marker_color="steelblue", marker_line_color="white",
+            marker_line_width=1, name="Disappeared",
+            hovertemplate="Frame %{x}<br>Lost %{y}<extra></extra>",
+        ), row=1, col=2)
+        peak_frame = int(disappearances.idxmax())
+        peak_count = int(disappearances.max())
+        fig.add_annotation(
+            x=peak_frame, y=peak_count,
+            ax=peak_frame + 1.5, ay=peak_count + 2,
+            xref="x2", yref="y2", axref="x2", ayref="y2",
+            text=f"Peak: frame {peak_frame} ({peak_count} cells)",
+            showarrow=True, arrowhead=2, arrowcolor="red",
+            font=dict(color="red", size=12),
+        )
 
     fig.update_xaxes(title_text="Lifetime (frames)", row=1, col=1)
     fig.update_yaxes(title_text="Count", row=1, col=1)
     fig.update_xaxes(title_text="Frame", row=1, col=2, tickmode="array",
-                     tickvals=list(range(0, last_frame + 1)))
+                     tickvals=list(range(min_frame, max_frame + 1)))
     fig.update_yaxes(title_text="Cells disappeared", row=1, col=2)
     fig.update_layout(showlegend=False)
 
@@ -518,7 +548,7 @@ def plot_area_distribution(tracked, baseline_frames=3):
     print(f"Median surface area: {cohort['surface_area'].median():.2f} \u00b5m\u00b2")
 
 
-def plot_burst_conc_all_metrics(tracked, track_stats, max_frame):
+def plot_burst_conc_all_metrics(tracked, track_stats, min_frame, max_frame):
     """Plot ACTUAL log10 of sucrose concentration vs log10 of V0, V_final, expnsion ratio"""
 
     burst_tracks = track_stats[track_stats["disappeared"] == True]["track_id"]
@@ -528,7 +558,7 @@ def plot_burst_conc_all_metrics(tracked, track_stats, max_frame):
         print("No burst cells found in tracked data.")
         return
         
-    first_obs = cohort[cohort["frame"] == 3].set_index("track_id")
+    first_obs = cohort[cohort["frame"] == min_frame].set_index("track_id")
     last_obs = cohort.sort_values("frame").groupby("track_id").last()
     
     last_obs = last_obs[last_obs["frame"] <= max_frame]
@@ -815,7 +845,7 @@ def plot_swelling_dynamics(tracked):
           f"{int(v_stats['count'].iloc[-1])}")
 
 
-def plot_swelling_per_conc(tracked, track_stats, max_frame):
+def plot_swelling_per_conc(tracked, track_stats, min_frame, max_frame):
     """Plot [V(t)-V(0)]/V(0) and [S(t)-S(0)]/S(0) vs. sucrose concentration"""
 
     burst_tracks = track_stats[track_stats["disappeared"] == True]["track_id"]
@@ -825,8 +855,8 @@ def plot_swelling_per_conc(tracked, track_stats, max_frame):
         print("No burst cells found in tracked data.")
         return
         
-    first_obs = cohort[cohort["frame"] == 3].set_index("track_id")
-    cohort = cohort[(cohort["frame"] >= 3) & (cohort["frame"] <= max_frame)]
+    first_obs = cohort[cohort["frame"] == min_frame].set_index("track_id")
+    cohort = cohort[(cohort["frame"] >= min_frame) & (cohort["frame"] <= max_frame)]
 
     cohort = cohort.merge(first_obs["volume"].rename("V0"), on="track_id")
     cohort = cohort.merge(
@@ -919,6 +949,196 @@ def plot_swelling_per_conc(tracked, track_stats, max_frame):
           f"{int(v_stats['count'].iloc[-1])}")"""
 
 
+def plot_tension(tracked, track_stats, min_frame, max_frame):
+    """Plot [V(t)-V(0)]/V(0) and [S(t)-S(0)]/S(0) vs. sucrose concentration * R0"""
+
+    burst_tracks = track_stats[track_stats["disappeared"] == True]["track_id"]
+    cohort = tracked[tracked["track_id"].isin(burst_tracks)].copy()
+    
+    if len(cohort) == 0:
+        print("No burst cells found in tracked data.")
+        return
+        
+    first_obs = cohort[cohort["frame"] == min_frame].set_index("track_id")
+    cohort = cohort[(cohort["frame"] >= min_frame) & (cohort["frame"] <= max_frame)]
+
+    cohort = cohort.merge(first_obs["volume"].rename("V0"), on="track_id")
+    cohort = cohort.merge(
+        first_obs["surface_area"].rename("S0"), on="track_id",
+    )
+    cohort["V_rel"] = (cohort["volume"] - cohort["V0"]) / cohort["V0"]
+    cohort["S_rel"] = (cohort["surface_area"] - cohort["S0"]) / cohort["S0"]
+    cohort["Sucr_R"] = cohort["Sucr %"] * cohort["radius"]
+
+    stats = cohort.groupby("frame").agg(
+        mean_V=("V_rel", "mean"), sem_V=("V_rel", "sem"),
+        mean_S=("S_rel", "mean"), sem_S=("S_rel", "sem"),
+        count=("V_rel", "count"),
+        mean_sucr_R=("Sucr_R", "mean") 
+    ).reset_index()
+
+    valid_tracks = cohort["track_id"].unique()
+    rng = np.random.default_rng(42)
+    subset_ids = rng.choice(
+        valid_tracks, size=min(20, len(valid_tracks)), replace=False,
+    )
+    subset = cohort[cohort["track_id"].isin(subset_ids)]
+
+    fig = make_subplots(
+        rows=1, cols=2, shared_yaxes=True,
+        subplot_titles=(
+            "Sucrose Concentration × R vs. [V(t) - V(0)] / V(0)",
+            "Sucrose Concentration × R vs. [S(t) - S(0)] / S(0)",
+        ),
+        horizontal_spacing=0.06,
+    )
+
+    track_color = _rgba("steelblue", 0.18)
+    grouped_subset = subset.groupby("track_id")
+    
+    for col, mean_col, sem_col, sub_col, group, y_label in [
+        (1, "mean_V", "sem_V", "V_rel", "panel1", "[V(t) - V(0)] / V(0)"),
+        (2, "mean_S", "sem_S", "S_rel", "panel2", "[S(t) - S(0)] / S(0)"),
+    ]:
+        for tid in subset_ids:
+            t = grouped_subset.get_group(tid)
+            fig.add_trace(go.Scatter(
+                x=t[sub_col], y=t["Sucr_R"], mode="lines", 
+                line=dict(color=track_color, width=1),
+                hoverinfo="skip", showlegend=False,
+                legendgroup=group,
+            ), row=1, col=col)
+
+        fig.add_trace(go.Scatter(
+            x=stats[mean_col], 
+            y=stats["mean_sucr_R"], 
+            mode="lines",
+            line=dict(color="steelblue", width=3),
+            name=f"Mean (n={len(valid_tracks)})",
+            legendgroup=group, showlegend=False
+        ), row=1, col=col)
+        
+        fig.add_vline(
+            x=0.0, line=dict(color="gray", dash="dash", width=1),
+            opacity=0.5, row=1, col=col,
+        )
+
+        final_mean = stats[mean_col].iloc[-1]
+        final_conc = stats["mean_sucr_R"].iloc[-1] # This works correctly now
+        
+        xref = "x" if col == 1 else "x2"
+        yref = "y" if col == 1 else "y2"
+        fig.add_annotation(
+            x=final_mean, y=final_conc,
+            ax=final_mean + 0.1, ay=0,
+            xref=xref, yref=yref, axref=xref, ayref=yref,
+            text=f"{final_mean:.2f}",
+            showarrow=True, arrowhead=2, arrowcolor="red",
+            font=dict(color="red", size=12),
+        )
+
+    fig.update_yaxes(title_text="Sucrose Concentration (%) × R", row=1, col=1, autorange="reversed")
+    fig.update_yaxes(title_text="Sucrose Concentration (%) × R", row=1, col=2, autorange="reversed")
+    fig.update_xaxes(title_text="[V(t)-V(0)]/V(0)", row=1, col=1)
+    fig.update_xaxes(title_text="[S(t)-S(0)]/S(0)", row=1, col=2)
+    fig.update_layout(
+        title="Sucrose concentration × R vs. Cell swelling dynamics",
+        showlegend=False,
+    )
+    
+    _finalize_plotly(fig, height=520, margin=dict(t=100, b=50, l=60, r=30))
+
+def plot_tension_comparison(tracked_ctrl, stats_ctrl, tracked_arr, stats_arr, 
+                            ctrl_min_frame=3, ctrl_max_frame=30, 
+                            arr_min_frame=3, arr_max_frame=30):
+    """Plot average [V(t)-V(0)]/V(0) and [S(t)-S(0)]/S(0) vs. sucrose concentration * R(t) for Control vs. Arrested."""
+
+    fig = make_subplots(
+        rows=1, cols=2, shared_yaxes=True,
+        subplot_titles=(
+            "Sucrose Concentration × R vs. \u0394V / V0",
+            "Sucrose Concentration × R vs. \u0394S / S0",
+        ),
+        horizontal_spacing=0.06,
+    )
+
+    datasets = {
+        "Control": {
+            "tracked": tracked_ctrl, "stats": stats_ctrl, 
+            "color": "steelblue", 
+            "min_f": ctrl_min_frame, "max_f": ctrl_max_frame
+        },
+        "Arrested": {
+            "tracked": tracked_arr, "stats": stats_arr, 
+            "color": "darkorange", 
+            "min_f": arr_min_frame, "max_f": arr_max_frame
+        }
+    }
+
+    for condition_name, data in datasets.items():
+        trk = data["tracked"]
+        stt = data["stats"]
+        line_color = data["color"]
+        min_f = data["min_f"] 
+        max_f = data["max_f"] 
+
+        burst_tracks = stt[stt["disappeared"] == True]["track_id"]
+        cohort = trk[trk["track_id"].isin(burst_tracks)].copy()
+        
+        if len(cohort) == 0:
+            print(f"No burst cells found in {condition_name}.")
+            continue
+            
+        first_obs = cohort[cohort["frame"] == min_f].set_index("track_id")
+        cohort = cohort[(cohort["frame"] >= min_f) & (cohort["frame"] <= max_f)]
+
+        cohort = cohort.merge(first_obs["volume"].rename("V0"), on="track_id")
+        cohort = cohort.merge(first_obs["surface_area"].rename("S0"), on="track_id")
+        
+        cohort["V_rel"] = (cohort["volume"] - cohort["V0"]) / cohort["V0"]
+        cohort["S_rel"] = (cohort["surface_area"] - cohort["S0"]) / cohort["S0"]
+        cohort["Sucr_R"] = cohort["Sucr %"] * cohort["radius"]
+
+        stats = cohort.groupby("frame").agg(
+            mean_V=("V_rel", "mean"),
+            mean_S=("S_rel", "mean"),
+            mean_sucr_R=("Sucr_R", "mean") 
+        ).reset_index()
+
+        valid_tracks = cohort["track_id"].unique()
+
+        for col, mean_col in [(1, "mean_V"), (2, "mean_S")]:
+            fig.add_trace(go.Scatter(
+                x=stats[mean_col], 
+                y=stats["mean_sucr_R"], 
+                mode="lines",
+                line=dict(color=line_color, width=3),
+                name=f"{condition_name} (n={len(valid_tracks)})",
+                legendgroup=condition_name, 
+                showlegend=(col == 1) 
+            ), row=1, col=col)
+            
+    for col in [1, 2]:
+        fig.add_vline(
+            x=0.0, line=dict(color="gray", dash="dash", width=1), 
+            opacity=0.5, row=1, col=col
+        )
+        fig.update_yaxes(title_text="Sucrose Concentration (%) × R", row=1, col=col, autorange="reversed")
+
+    fig.update_xaxes(title_text="\u0394V / V0", row=1, col=1)
+    fig.update_xaxes(title_text="\u0394S / S0", row=1, col=2)
+    
+    fig.update_layout(
+        title="Comparison: Tension (Sucrose × R) vs. Cell Swelling Dynamics",
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01)
+    )
+    
+    try:
+        _finalize_plotly(fig, height=520, margin=dict(t=100, b=50, l=60, r=30))
+    except NameError:
+        fig.show()
+
+
 def plot_swelling_vs_survival(tracked):
     """Scatter of max swelling vs initial volume, and V(t)/V(0) by outcome."""
     from numpy.polynomial.polynomial import polyfit
@@ -956,8 +1176,7 @@ def plot_swelling_vs_survival(tracked):
             continue
         fig.add_trace(go.Scatter(
             x=sub["V0"], y=sub["V_rel_max"], mode="markers",
-            marker=dict(color=color, size=6, opacity=0.55,
-                        line=dict(width=0)),
+            marker=dict(color=color, size=6, opacity=0.55, line=dict(width=0)),
             name=label, legendgroup="panel1",
             hovertemplate=(
                 "V(0) %{x:.2f} \u00b5m\u00b3<br>Max V(t)/V(0) %{y:.2f}"
