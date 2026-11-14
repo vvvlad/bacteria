@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+from scipy.stats import linregress
 
 
 # ---------------------------------------------------------------------------
@@ -20,11 +21,11 @@ from plotly.subplots import make_subplots
 PLOT_SOURCES: dict[str, list[str]] = {
     "plot_frame_gating": ["frame_diagnostics.csv", "dropped_frames.csv"],
     "plot_cells_per_frame": ["tracked_cells.csv"],
-    "plot_cells_per_concenration": ["tracked_cells.csv"],
+    "plot_cells_per_concentration": ["tracked_cells.csv"],
     "plot_lifetime_distribution": ["track_statistics.csv"],
     "plot_area_distribution": ["tracked_cells.csv"],
     "plot_burst_conc_all_metrics": ["tracked_cells.csv", "track_statistics.csv"],
-    "check_frames_quality": ["tracked_cells.csv"],
+    "plot_mean_volume": ["tracked_cells.csv"],
     "plot_swelling_dynamics": ["tracked_cells.csv"],
     "plot_swelling_per_conc": ["tracked_cells.csv", "track_statistics.csv"],
     "plot_swelling_vs_survival": ["tracked_cells.csv"],
@@ -43,7 +44,14 @@ PLOT_SOURCES: dict[str, list[str]] = {
     ],
     "plot_initial_features_vs_lifespan": ["tracked_cells.csv", "track_statistics.csv"],
     "plot_tension": ["tracked_cells.csv", "track_statistics.csv"],
+    "plot_tension_by_survival": ["tracked_cells.csv", "track_statistics.csv"],
     "plot_tension_comparison": ["tracked_cells.csv", "track_statistics.csv", "tracked_cells.csv", "track_statistics.csv"],
+    "plot_contrast_scatter": ["tracked_cells.csv"],
+    "plot_radial_profile": ["ring_profiles_df"],
+    "plot_contrast_vs_volume_ratio": ["tracked_cells.csv"],
+    "plot_radial_profile": ["ring_profiles_df"],
+    "plot_contrast_vs_volume_ratio": ["tracked_cells.csv"],
+    "plot_mid_radius_burst_cells": ["ring_profiles_df", "track_statistics.csv"],
 }
 
 
@@ -136,12 +144,13 @@ def _frame_xaxis(fig, frames, row=None, col=None, title="Frame"):
 
 
 def _add_mean_sem_band(
-    fig, x, mean, sem, color, name, legendgroup, row, col, y_label="value",
+    fig, x, mean, sem, color, name, legendgroup, row, col, y_label="value", hovertext=None, x_label="Frame", **kwargs
 ):
     """Plotly equivalent of fill_between + line+markers for a mean+/-SEM band."""
     x = list(x)
     upper = (mean + sem).tolist()
     lower = (mean - sem).tolist()
+    
     fig.add_trace(
         go.Scatter(
             x=x + x[::-1], y=upper + lower[::-1],
@@ -152,14 +161,23 @@ def _add_mean_sem_band(
         ),
         row=row, col=col,
     )
+    
+    if hovertext is not None:
+        htemplate = f"%{{hovertext}}<br>{y_label}: %{{y:.4f}}<extra>{name}</extra>"
+    else:
+        if x_label == "Frame":
+            htemplate = f"Frame %{{x}}<br>{y_label} %{{y:.4f}}<extra>{name}</extra>"
+        else:
+            htemplate = f"{x_label} %{{x:.2f}}<br>{y_label} %{{y:.4f}}<extra>{name}</extra>"
+            
     fig.add_trace(
         go.Scatter(
             x=x, y=mean.tolist(), mode="lines+markers",
             line=dict(color=color, width=2), marker=dict(size=5),
             name=name, legendgroup=legendgroup,
-            hovertemplate=(
-                f"Frame %{{x}}<br>{y_label} %{{y:.4f}}<extra>{name}</extra>"
-            ),
+            hovertemplate=htemplate,
+            hovertext=hovertext,
+            **kwargs
         ),
         row=row, col=col,
     )
@@ -355,7 +373,7 @@ def plot_cells_per_frame(tracked):
     else:
         print("50% disappearance not reached within the stack")
 
-def plot_cells_per_concenration(tracked):
+def plot_cells_per_concentration(tracked):
     """Plot tracked cell count over concenration with 50% disappearance marker."""
     max_conc = tracked["Sucr %"].max()
     frames_with_max_conc = tracked[tracked["Sucr %"] == max_conc]["frame"].unique()
@@ -549,7 +567,7 @@ def plot_area_distribution(tracked, baseline_frames=3):
 
 
 def plot_burst_conc_all_metrics(tracked, track_stats, min_frame, max_frame):
-    """Plot ACTUAL log10 of sucrose concentration vs log10 of V0, V_final, expnsion ratio"""
+    """Plot sucrose concentration vs V0, V_final, expansion ratio with trendlines."""
 
     burst_tracks = track_stats[track_stats["disappeared"] == True]["track_id"]
     cohort = tracked[tracked["track_id"].isin(burst_tracks)].copy()
@@ -560,7 +578,6 @@ def plot_burst_conc_all_metrics(tracked, track_stats, min_frame, max_frame):
         
     first_obs = cohort[cohort["frame"] == min_frame].set_index("track_id")
     last_obs = cohort.sort_values("frame").groupby("track_id").last()
-    
     last_obs = last_obs[last_obs["frame"] <= max_frame]
     
     cohort = cohort.merge(first_obs["volume"].rename("V0"), on="track_id")
@@ -573,12 +590,6 @@ def plot_burst_conc_all_metrics(tracked, track_stats, min_frame, max_frame):
     plot_df["V_final"] = pd.to_numeric(plot_df["V_final"], errors="coerce")
     plot_df = plot_df[(plot_df["V0"] > 0) & (plot_df["burst_conc"] > 0) & (plot_df["V_final"] > 0)].copy()
     plot_df["expansion_ratio"] = plot_df["V_final"] / plot_df["V0"]
-
-    # convert to log
-    plot_df["log10_V0"] = np.log10(plot_df["V0"])
-    plot_df["log10_burst_conc"] = np.log10(plot_df["burst_conc"])
-    plot_df["log10_V_final"] = np.log10(plot_df["V_final"])
-    plot_df["log10_expansion"] = np.log10(plot_df["expansion_ratio"])
     
     fig = make_subplots(
         rows=1, cols=3,
@@ -591,133 +602,50 @@ def plot_burst_conc_all_metrics(tracked, track_stats, min_frame, max_frame):
         horizontal_spacing=0.08
     )
 
-    fig.add_trace(go.Scatter(
-        x=plot_df["log10_V0"], 
-        y=plot_df["log10_burst_conc"],
-        mode="markers",
-        marker=dict(size=8, color="crimson", opacity=0.6, line=dict(width=1, color="black")),
-        showlegend=False,
-        customdata=plot_df[["V0", "burst_conc"]],
-        hovertemplate="<b>Log10(V0): %{x:.2f}</b><br><b>Log10(Burst Conc): %{y:.2f}</b><br><br>Original Volume: %{customdata[0]:.1f} µm³<br>Original Conc: %{customdata[1]:.1f}%<extra></extra>"
-    ), row=1, col=1)
+    panels = [
+        {"col": 1, "x_col": "V0", "cust_col": "V0", "x_label": "V0", "orig_label": "Original Volume", "unit": " µm³"},
+        {"col": 2, "x_col": "V_final", "cust_col": "V_final", "x_label": "V_final", "orig_label": "Final Volume", "unit": " µm³"},
+        {"col": 3, "x_col": "expansion_ratio", "cust_col": "expansion_ratio", "x_label": "expansion_ratio", "orig_label": "Expansion Ratio", "unit": ""}
+    ]
 
-    """
-    df_clean = plot_df.dropna(subset=["log10_V0", "log10_V_final", "log10_expansion", "log10_burst_conc"])
-    x_data = df_clean["log10_V0"]
-    y_data = df_clean["log10_burst_conc"]
-    z = np.polyfit(x_data, y_data, 1)
-    p= np.poly1d(z)
-    x_trend = np.linspace(x_data.min(), x_data.max(), 50)
-    y_trend = p(x_trend)
+    y_data = plot_df["burst_conc"]
 
-    fig.add_trace(go.Scatter(
-        x=x_trend,
-        y=y_trend,
-        mode="lines",
-        line=dict(color="blue", width=3, dash="dash"),
-        showlegend=False,
-        hoverinfo="skip"
-    ), row=1, col=1)"""
-
-    fig.add_trace(go.Scatter(
-            x=plot_df["log10_V_final"], 
-            y=plot_df["log10_burst_conc"],
+    for p in panels:
+        x_data = plot_df[p["x_col"]]
+        
+        fig.add_trace(go.Scatter(
+            x=x_data, 
+            y=y_data,
             mode="markers",
             marker=dict(size=8, color="crimson", opacity=0.6, line=dict(width=1, color="black")),
             showlegend=False,
-            customdata=plot_df[["V_final", "burst_conc"]],
-            hovertemplate="<b>Log10(V_final): %{x:.2f}</b><br><b>Log10(Burst Conc): %{y:.2f}</b><br><br>Original Volume: %{customdata[0]:.1f} µm³<br>Original Conc: %{customdata[1]:.1f}%<extra></extra>"
-        ), row=1, col=2)
+            customdata=plot_df[[p["cust_col"], "burst_conc"]],
+            hovertemplate=f"<b>{p['x_label']}: %{{x:.2f}}</b><br><b>Burst Conc: %{{y:.2f}}</b><br><br>{p['orig_label']}: %{{customdata[0]:.1f}}{p['unit']}<br>Original Conc: %{{customdata[1]:.1f}}%<extra></extra>"
+        ), row=1, col=p["col"])
 
-    """
-    x_data = df_clean["log10_V_final"]
-    z = np.polyfit(x_data, y_data, 1)
-    p= np.poly1d(z)
-    x_trend = np.linspace(x_data.min(), x_data.max(), 50)
-    y_trend = p(x_trend)
-
-    fig.add_trace(go.Scatter(
-        x=x_trend,
-        y=y_trend,
-        mode="lines",
-        line=dict(color="blue", width=3, dash="dash"),
-        showlegend=False,
-        hoverinfo="skip"
-    ), row=1, col=2)"""
-
-    fig.add_trace(go.Scatter(
-            x=plot_df["log10_expansion"], 
-            y=plot_df["log10_burst_conc"],
-            mode="markers",
-            marker=dict(size=8, color="crimson", opacity=0.6, line=dict(width=1, color="black")),
-            showlegend=False,
-            customdata=plot_df[["V0", "burst_conc"]],
-            hovertemplate="<b>Log10(Ratio): %{x:.2f}</b><br><b>Log10(Burst Conc): %{y:.2f}</b><br><br>Original Volume: %{customdata[0]:.1f} µm³<br>Original Conc: %{customdata[1]:.1f}%<extra></extra>"
-        ), row=1, col=3)
-
-    """
-    x_data = df_clean["log10_expansion"]
-    z = np.polyfit(x_data, y_data, 1)
-    p= np.poly1d(z)
-    x_trend = np.linspace(x_data.min(), x_data.max(), 50)
-    y_trend = p(x_trend)
-
-    fig.add_trace(go.Scatter(
-        x=x_trend,
-        y=y_trend,
-        mode="lines",
-        line=dict(color="blue", width=3, dash="dash"),
-        showlegend=False,
-        hoverinfo="skip"
-    ), row=1, col=3)"""
-    
     fig.update_layout(
         title="Osmotic Burst Limits",
         height=500, width=1200, plot_bgcolor="white"
     )
-    fig.update_xaxes(title_text="Log10( V0 )" ,showgrid=True, gridwidth=1, gridcolor='LightGray', row=1, col=1)
-    fig.update_xaxes(title_text="Log10( V_final )" ,showgrid=True, gridwidth=1, gridcolor='LightGray', row=1, col=2)
-    fig.update_xaxes(title_text="Log10( V_final/V0 )" ,showgrid=True, gridwidth=1, gridcolor='LightGray', row=1, col=3)
-
-    fig.update_yaxes(title_text="Log10( Burst Concentration )" ,showgrid=True, gridwidth=1, gridcolor='LightGray', row=1, col=1)
-    fig.update_yaxes(title_text="Log10( Burst Concentration )" ,showgrid=True, gridwidth=1, gridcolor='LightGray', row=1, col=2)
-    fig.update_yaxes(title_text="Log10( Burst Concentration )" ,showgrid=True, gridwidth=1, gridcolor='LightGray', row=1, col=3)
+    
+    for col in [1, 2, 3]:
+        fig.update_xaxes(title_text=panels[col-1]["x_label"], showgrid=True, gridwidth=1, gridcolor='LightGray', row=1, col=col)
+        fig.update_yaxes(title_text="Burst Concentration", showgrid=True, gridwidth=1, gridcolor='LightGray', row=1, col=col, autorange="reversed")
 
     try:
         _finalize_plotly(fig, height=500)
-    except:
+    except NameError:
         fig.show()
 
-from plotly.subplots import make_subplots
-import plotly.graph_objects as go
-import pandas as pd
-
-def check_frames_quality(tracked):
+def plot_mean_volume(tracked):
     """Plot diagnostics to find bad frames (focus loss, tracking errors)."""
     
     frame_stats = tracked.groupby('frame').agg(
-        cell_count=('track_id', 'count'),     
         mean_volume=('volume', 'mean'),       
         median_volume=('volume', 'median')    
     ).reset_index()
 
-    fig = make_subplots(
-        rows=2, cols=1, 
-        shared_xaxes=True,
-        vertical_spacing=0.1,
-        subplot_titles=(
-            "1. Number of Tracked Cells (Drops indicate lost focus/tracking)", 
-            "2. Average Cell Volume (Spikes indicate blur/focus shift)"
-        )
-    )
-
-    fig.add_trace(go.Scatter(
-        x=frame_stats['frame'], y=frame_stats['cell_count'],
-        mode='lines+markers',
-        name='Cell Count',
-        marker=dict(size=8, color="blue"),
-        hovertemplate="Frame: %{x}<br>Cells: %{y}<extra></extra>"
-    ), row=1, col=1)
+    fig = go.Figure()
 
     fig.add_trace(go.Scatter(
         x=frame_stats['frame'], y=frame_stats['mean_volume'],
@@ -725,7 +653,7 @@ def check_frames_quality(tracked):
         name='Mean Volume',
         marker=dict(size=8, color="red"),
         hovertemplate="Frame: %{x}<br>Mean Vol: %{y:.1f} µm³<extra></extra>"
-    ), row=2, col=1)
+    ))
     
     fig.add_trace(go.Scatter(
         x=frame_stats['frame'], y=frame_stats['median_volume'],
@@ -733,20 +661,17 @@ def check_frames_quality(tracked):
         name='Median Volume',
         line=dict(color="orange", dash="dash"),
         hoverinfo="skip"
-    ), row=2, col=1)
+    ))
 
     fig.update_layout(
-        title="Frame Quality Diagnostics",
-        height=600, width=800, 
+        title="Cell Volume Diagnostics (Spikes indicate blur/focus shift)",
+        height=450, width=800, 
         plot_bgcolor="white",
-        showlegend=False
+        showlegend=True 
     )
     
-    fig.update_xaxes(title_text="Frame Number", showgrid=True, gridcolor='LightGray', row=2, col=1)
-    fig.update_yaxes(title_text="Total Cells", showgrid=True, gridcolor='LightGray', row=1, col=1)
-    fig.update_yaxes(title_text="Volume (µm³)", showgrid=True, gridcolor='LightGray', row=2, col=1)
-
-    fig.update_xaxes(dtick=1) 
+    fig.update_xaxes(title_text="Frame Number", showgrid=True, gridcolor='LightGray', dtick=1)
+    fig.update_yaxes(title_text="Volume (µm³)", showgrid=True, gridcolor='LightGray')
 
     fig.show()
 
@@ -845,8 +770,8 @@ def plot_swelling_dynamics(tracked):
           f"{int(v_stats['count'].iloc[-1])}")
 
 
-def plot_swelling_per_conc(tracked, track_stats, min_frame, max_frame):
-    """Plot [V(t)-V(0)]/V(0) and [S(t)-S(0)]/S(0) vs. sucrose concentration"""
+def plot_swelling_per_conc(tracked, track_stats, min_frame, max_frame, split_frame=None):
+    """Plot [V(t)-V(0)]/V(0) and [S(t)-S(0)]/S(0) vs. sucrose concentration with linear fits"""
 
     burst_tracks = track_stats[track_stats["disappeared"] == True]["track_id"]
     cohort = tracked[tracked["track_id"].isin(burst_tracks)].copy()
@@ -888,7 +813,11 @@ def plot_swelling_per_conc(tracked, track_stats, min_frame, max_frame):
         horizontal_spacing=0.06,
     )
 
-    track_color = _rgba("steelblue", 0.18)
+    try:
+        track_color = _rgba("steelblue", 0.18)
+    except NameError:
+        track_color = "rgba(70, 130, 180, 0.18)"
+
     grouped_subset = subset.groupby("track_id")
     for col, mean_col, sem_col, sub_col, group, y_label in [
         (1, "mean_V", "sem_V", "V_rel", "panel1", "[V(t) - V(0)] / V(0)"),
@@ -909,6 +838,50 @@ def plot_swelling_per_conc(tracked, track_stats, min_frame, max_frame):
             name=f"Mean (n={len(valid_tracks)})",
             legendgroup=group, showlegend=False
         ), row=1, col=col)
+        
+        if split_frame is None:
+            segments = [
+                ("Overall Fit", stats["frame"].notnull(), "black", 0.95)
+            ]
+        else:
+            segments = [
+                ("Phase 1", stats["frame"] <= split_frame, "green", 0.95),
+                ("Phase 2", stats["frame"] >= split_frame, "purple", 0.85)
+            ]
+            
+        for phase_name, seg_mask, fit_color, y_pos in segments:
+            seg_stats = stats[seg_mask]
+            
+            x_val = seg_stats[mean_col].values
+            y_val = seg_stats["sucr_conc"].values
+            
+            valid = np.isfinite(x_val) & np.isfinite(y_val)
+            if valid.sum() > 1:
+                slope, intercept, r_val, p_val, std_err = linregress(x_val[valid], y_val[valid])
+                
+                x_fit = np.array([x_val[valid].min(), x_val[valid].max()])
+                y_fit = slope * x_fit + intercept
+                
+                fig.add_trace(go.Scatter(
+                    x=x_fit, y=y_fit, mode="lines",
+                    line=dict(color=fit_color, width=2.5, dash="dash"),
+                    showlegend=False, hoverinfo="skip"
+                ), row=1, col=col)
+                
+                axis_suffix = "" if col == 1 else str(col)
+                eq_text = f"<b>{phase_name}</b>: y={slope:.2f}x{'+' if intercept>=0 else ''}{intercept:.2f} (R²={r_val**2:.2f})"
+                
+                fig.add_annotation(
+                    text=eq_text,
+                    x=0.95, y=y_pos, 
+                    xref=f"x{axis_suffix} domain", 
+                    yref=f"y{axis_suffix} domain",
+                    showarrow=False, align="right",
+                    bgcolor="rgba(255, 255, 255, 0.8)", 
+                    bordercolor=fit_color, borderwidth=1,
+                    font=dict(color=fit_color, size=11)
+                )
+
         fig.add_vline(
             x=0.0, line=dict(color="gray", dash="dash", width=1),
             opacity=0.5, row=1, col=col,
@@ -935,22 +908,14 @@ def plot_swelling_per_conc(tracked, track_stats, min_frame, max_frame):
         title="Sucrose concentration vs. Cell swelling dynamics",
         showlegend=False,
     )
-    _finalize_plotly(fig, height=520, margin=dict(t=100, b=50, l=60, r=30))
-    """
-    print(
-        f"\nFinal [V(t)-V(0)]/V(0) at {stats['sucr_conc']}: "
-        f"{v_stats['mean'].iloc[-1]:.3f} \u00b1 {v_stats['sem'].iloc[-1]:.3f}"
-    )
-    print(
-        f"Final S(t)/S(0) at frame {int(s_stats.index[-1])}: "
-        f"{s_stats['mean'].iloc[-1]:.3f} \u00b1 {s_stats['sem'].iloc[-1]:.3f}"
-    )
-    print(f"Cells contributing at final frame: "
-          f"{int(v_stats['count'].iloc[-1])}")"""
+    
+    try:
+        _finalize_plotly(fig, height=520, margin=dict(t=100, b=50, l=60, r=30))
+    except NameError:
+        fig.show()
 
-
-def plot_tension(tracked, track_stats, min_frame, max_frame):
-    """Plot [V(t)-V(0)]/V(0) and [S(t)-S(0)]/S(0) vs. sucrose concentration * R0"""
+def plot_tension(tracked, track_stats, min_frame, max_frame, split_frame=None):
+    """Plot [V(t)-V(0)]/V(0) and [S(t)-S(0)]/S(0) vs. sucrose concentration * R0 with linear fits"""
 
     burst_tracks = track_stats[track_stats["disappeared"] == True]["track_id"]
     cohort = tracked[tracked["track_id"].isin(burst_tracks)].copy()
@@ -993,13 +958,19 @@ def plot_tension(tracked, track_stats, min_frame, max_frame):
         horizontal_spacing=0.06,
     )
 
-    track_color = _rgba("steelblue", 0.18)
+    track_color = "rgba(70, 130, 180, 0.18)" 
+    try:
+        track_color = _rgba("steelblue", 0.18)
+    except NameError:
+        pass
+
     grouped_subset = subset.groupby("track_id")
     
     for col, mean_col, sem_col, sub_col, group, y_label in [
         (1, "mean_V", "sem_V", "V_rel", "panel1", "[V(t) - V(0)] / V(0)"),
         (2, "mean_S", "sem_S", "S_rel", "panel2", "[S(t) - S(0)] / S(0)"),
     ]:
+        # Plot individual spaghetti lines
         for tid in subset_ids:
             t = grouped_subset.get_group(tid)
             fig.add_trace(go.Scatter(
@@ -1009,6 +980,7 @@ def plot_tension(tracked, track_stats, min_frame, max_frame):
                 legendgroup=group,
             ), row=1, col=col)
 
+        # Plot the mean line
         fig.add_trace(go.Scatter(
             x=stats[mean_col], 
             y=stats["mean_sucr_R"], 
@@ -1018,13 +990,56 @@ def plot_tension(tracked, track_stats, min_frame, max_frame):
             legendgroup=group, showlegend=False
         ), row=1, col=col)
         
+        if split_frame is None:
+            segments = [
+                ("Overall Fit", stats["frame"].notnull(), "black", 0.95)
+            ]
+        else:
+            segments = [
+                ("Phase 1", stats["frame"] <= split_frame, "green", 0.95),
+                ("Phase 2", stats["frame"] >= split_frame, "purple", 0.85) 
+            ]
+            
+        for phase_name, seg_mask, fit_color, y_pos in segments:
+            seg_stats = stats[seg_mask]
+            
+            x_val = seg_stats[mean_col].values
+            y_val = seg_stats["mean_sucr_R"].values
+            
+            valid = np.isfinite(x_val) & np.isfinite(y_val)
+            if valid.sum() > 1:
+                slope, intercept, r_val, p_val, std_err = linregress(x_val[valid], y_val[valid])
+                
+                x_fit = np.array([x_val[valid].min(), x_val[valid].max()])
+                y_fit = slope * x_fit + intercept
+                
+                fig.add_trace(go.Scatter(
+                    x=x_fit, y=y_fit, mode="lines",
+                    line=dict(color=fit_color, width=2.5, dash="dash"),
+                    showlegend=False, hoverinfo="skip"
+                ), row=1, col=col)
+                
+                axis_suffix = "" if col == 1 else str(col)
+                eq_text = f"<b>{phase_name}</b>: y={slope:.2f}x{'+' if intercept>=0 else ''}{intercept:.2f} (R²={r_val**2:.2f})"
+                
+                fig.add_annotation(
+                    text=eq_text,
+                    x=0.95, y=y_pos, 
+                    xref=f"x{axis_suffix} domain", 
+                    yref=f"y{axis_suffix} domain",
+                    showarrow=False, align="right",
+                    bgcolor="rgba(255, 255, 255, 0.8)", 
+                    bordercolor=fit_color, borderwidth=1,
+                    font=dict(color=fit_color, size=11)
+                )
+
         fig.add_vline(
             x=0.0, line=dict(color="gray", dash="dash", width=1),
             opacity=0.5, row=1, col=col,
         )
 
         final_mean = stats[mean_col].iloc[-1]
-        final_conc = stats["mean_sucr_R"].iloc[-1] # This works correctly now
+        final_conc = stats["mean_sucr_R"].iloc[-1]
         
         xref = "x" if col == 1 else "x2"
         yref = "y" if col == 1 else "y2"
@@ -1041,12 +1056,209 @@ def plot_tension(tracked, track_stats, min_frame, max_frame):
     fig.update_yaxes(title_text="Sucrose Concentration (%) × R", row=1, col=2, autorange="reversed")
     fig.update_xaxes(title_text="[V(t)-V(0)]/V(0)", row=1, col=1)
     fig.update_xaxes(title_text="[S(t)-S(0)]/S(0)", row=1, col=2)
+    
     fig.update_layout(
         title="Sucrose concentration × R vs. Cell swelling dynamics",
         showlegend=False,
     )
     
-    _finalize_plotly(fig, height=520, margin=dict(t=100, b=50, l=60, r=30))
+    try:
+        _finalize_plotly(fig, height=520, margin=dict(t=100, b=50, l=60, r=30))
+    except NameError:
+        fig.show()
+
+def plot_tension_by_survival(tracked, track_stats, min_frame, max_frame, split_frame=None):
+    """
+    Plot [V(t)-V(0)]/V(0) and [S(t)-S(0)]/S(0) vs. sucrose concentration * R0 with linear fits.
+    Separated into two rows: Survived (top) and Disappeared (bottom).
+    """
+
+    # We need all tracks that start at min_frame
+    first_obs_all = tracked[tracked["frame"] == min_frame].copy()
+    if first_obs_all.empty:
+        print("No cells found at min_frame.")
+        return
+        
+    valid_tracks_init = first_obs_all["track_id"].unique()
+    cohort = tracked[(tracked["track_id"].isin(valid_tracks_init)) & 
+                     (tracked["frame"] >= min_frame) & 
+                     (tracked["frame"] <= max_frame)].copy()
+
+    # Get survival status
+    track_status = track_stats.set_index("track_id")["disappeared"]
+    
+    first_obs = cohort[cohort["frame"] == min_frame].set_index("track_id")
+    
+    cohort = cohort.merge(first_obs["volume"].rename("V0"), on="track_id")
+    cohort = cohort.merge(first_obs["surface_area"].rename("S0"), on="track_id")
+    
+    # Join survival status to the cohort
+    cohort = cohort.join(track_status, on="track_id")
+    cohort["survived"] = ~cohort["disappeared"]
+    
+    cohort["V_rel"] = (cohort["volume"] - cohort["V0"]) / cohort["V0"]
+    cohort["S_rel"] = (cohort["surface_area"] - cohort["S0"]) / cohort["S0"]
+    cohort["Sucr_R"] = cohort["Sucr %"] * cohort["radius"]
+
+    fig = make_subplots(
+        rows=2, cols=2, shared_yaxes=True,
+        subplot_titles=(
+            "Survived: Sucrose × R vs. [V(t)-V(0)]/V(0)",
+            "Survived: Sucrose × R vs. [S(t)-S(0)]/S(0)",
+            "Disappeared: Sucrose × R vs. [V(t)-V(0)]/V(0)",
+            "Disappeared: Sucrose × R vs. [S(t)-S(0)]/S(0)",
+        ),
+        horizontal_spacing=0.06,
+        vertical_spacing=0.15
+    )
+
+    rng = np.random.default_rng(42)
+
+    # We loop over the two conditions (Survived vs Disappeared)
+    for row_idx, (status_label, is_survived, base_color) in enumerate([
+        ("Survived", True, "steelblue"),
+        ("Disappeared", False, "tomato")
+    ], start=1):
+        
+        sub_cohort = cohort[cohort["survived"] == is_survived].copy()
+        
+        if sub_cohort.empty:
+            continue
+            
+        stats = sub_cohort.groupby("frame").agg(
+            mean_V=("V_rel", "mean"), sem_V=("V_rel", "sem"),
+            mean_S=("S_rel", "mean"), sem_S=("S_rel", "sem"),
+            count=("V_rel", "count"),
+            mean_sucr_R=("Sucr_R", "mean"),
+            frame=("frame", "first")
+        ).reset_index(drop=True)
+
+        valid_tracks = sub_cohort["track_id"].unique()
+        subset_ids = rng.choice(
+            valid_tracks, size=min(20, len(valid_tracks)), replace=False,
+        )
+        subset = sub_cohort[sub_cohort["track_id"].isin(subset_ids)]
+        grouped_subset = subset.groupby("track_id")
+
+        try:
+            spaghetti_color = f"rgba({int(base_color == 'tomato')*255}, {int(base_color == 'steelblue')*130}, {int(base_color == 'steelblue')*180}, 0.18)"
+            if base_color == "tomato":
+                 spaghetti_color = "rgba(255, 99, 71, 0.18)"
+            else:
+                 spaghetti_color = "rgba(70, 130, 180, 0.18)"
+        except NameError:
+            spaghetti_color = "rgba(150, 150, 150, 0.2)"
+
+        for col, mean_col, sem_col, sub_col in [
+            (1, "mean_V", "sem_V", "V_rel"),
+            (2, "mean_S", "sem_S", "S_rel"),
+        ]:
+            # Plot individual spaghetti lines
+            for tid in subset_ids:
+                t = grouped_subset.get_group(tid)
+                fig.add_trace(go.Scatter(
+                    x=t[sub_col], y=t["Sucr_R"], mode="lines", 
+                    line=dict(color=spaghetti_color, width=1),
+                    hoverinfo="skip", showlegend=False,
+                ), row=row_idx, col=col)
+
+            # Plot the mean line
+            fig.add_trace(go.Scatter(
+                x=stats[mean_col], 
+                y=stats["mean_sucr_R"], 
+                mode="lines",
+                line=dict(color=base_color, width=3),
+                name=f"{status_label} Mean (n={len(valid_tracks)})",
+                showlegend=False
+            ), row=row_idx, col=col)
+            
+            # Linear Fits
+            if split_frame is None:
+                segments = [
+                    ("Overall Fit", stats["frame"].notnull(), "black", 0.95)
+                ]
+            else:
+                segments = [
+                    ("Phase 1", stats["frame"] <= split_frame, "green", 0.95),
+                    ("Phase 2", stats["frame"] >= split_frame, "purple", 0.85) 
+                ]
+                
+            for phase_name, seg_mask, fit_color, y_pos in segments:
+                seg_stats = stats[seg_mask]
+                
+                x_val = seg_stats[mean_col].values
+                y_val = seg_stats["mean_sucr_R"].values
+                
+                valid = np.isfinite(x_val) & np.isfinite(y_val)
+                if valid.sum() > 1:
+                    slope, intercept, r_val, p_val, std_err = linregress(x_val[valid], y_val[valid])
+                    
+                    x_fit = np.array([x_val[valid].min(), x_val[valid].max()])
+                    y_fit = slope * x_fit + intercept
+                    
+                    fig.add_trace(go.Scatter(
+                        x=x_fit, y=y_fit, mode="lines",
+                        line=dict(color=fit_color, width=2.5, dash="dash"),
+                        showlegend=False, hoverinfo="skip"
+                    ), row=row_idx, col=col)
+                    
+                    axis_suffix = ""
+                    if row_idx == 1 and col == 2: axis_suffix = "2"
+                    elif row_idx == 2 and col == 1: axis_suffix = "3"
+                    elif row_idx == 2 and col == 2: axis_suffix = "4"
+                    
+                    # Ensure axis suffix matches plotly's internal numbering for subplots
+                    xref = f"x{axis_suffix}" if axis_suffix else "x"
+                    yref = f"y{axis_suffix}" if axis_suffix else "y"
+
+                    eq_text = f"<b>{phase_name}</b>: y={slope:.2f}x{'+' if intercept>=0 else ''}{intercept:.2f} (R²={r_val**2:.2f})"
+                    
+                    fig.add_annotation(
+                        text=eq_text,
+                        x=0.95, y=y_pos, 
+                        xref=f"{xref} domain", 
+                        yref=f"{yref} domain",
+                        showarrow=False, align="right",
+                        bgcolor="rgba(255, 255, 255, 0.8)", 
+                        bordercolor=fit_color, borderwidth=1,
+                        font=dict(color=fit_color, size=11)
+                    )
+
+            fig.add_vline(
+                x=0.0, line=dict(color="gray", dash="dash", width=1),
+                opacity=0.5, row=row_idx, col=col,
+            )
+
+            # Mark the endpoint
+            if not stats[mean_col].dropna().empty:
+                final_mean = stats[mean_col].iloc[-1]
+                final_conc = stats["mean_sucr_R"].iloc[-1]
+                
+                fig.add_annotation(
+                    x=final_mean, y=final_conc,
+                    ax=final_mean + 0.1, ay=0,
+                    xref=xref, yref=yref, axref=xref, ayref=yref,
+                    text=f"{final_mean:.2f}",
+                    showarrow=True, arrowhead=2, arrowcolor="black",
+                    font=dict(color="black", size=12),
+                )
+
+    fig.update_yaxes(title_text="Sucrose (%) × R", autorange="reversed", row=1, col=1)
+    fig.update_yaxes(title_text="Sucrose (%) × R", autorange="reversed", row=2, col=1)
+    
+    fig.update_xaxes(title_text="[V(t)-V(0)]/V(0)", row=2, col=1)
+    fig.update_xaxes(title_text="[S(t)-S(0)]/S(0)", row=2, col=2)
+    
+    fig.update_layout(
+        title="Sucrose concentration × R vs. Cell swelling dynamics by Survival",
+        showlegend=False,
+        height=800
+    )
+    
+    try:
+        _finalize_plotly(fig, height=800, margin=dict(t=100, b=50, l=60, r=30))
+    except NameError:
+        fig.show()
 
 def plot_tension_comparison(tracked_ctrl, stats_ctrl, tracked_arr, stats_arr, 
                             ctrl_min_frame=3, ctrl_max_frame=30, 
@@ -1139,9 +1351,12 @@ def plot_tension_comparison(tracked_ctrl, stats_ctrl, tracked_arr, stats_arr,
         fig.show()
 
 
-def plot_swelling_vs_survival(tracked):
+def plot_swelling_vs_survival(tracked, num_bins=15):
     """Scatter of max swelling vs initial volume, and V(t)/V(0) by outcome."""
-    from numpy.polynomial.polynomial import polyfit
+    import numpy as np
+    import pandas as pd
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
 
     frame0_tracks = _frame0_track_ids(tracked)
     cohort = tracked[tracked["track_id"].isin(frame0_tracks)].copy()
@@ -1155,8 +1370,11 @@ def plot_swelling_vs_survival(tracked):
         V_rel_max=("V_rel", "max"),
         V_rel_final=("V_rel", "last"),
         last_frame=("frame", "max"),
+        first_frame=("frame", "min"),
     ).reset_index()
     per_track["survived"] = per_track["last_frame"] == cohort["frame"].max()
+
+    per_track_plot1 = per_track[(per_track["V0"] <= 10) & (per_track["V_rel_max"] <= 3)].copy()
 
     fig = make_subplots(
         rows=1, cols=2,
@@ -1171,7 +1389,7 @@ def plot_swelling_vs_survival(tracked):
         ("Survived", True, "steelblue"),
         ("Disappeared", False, "tomato"),
     ]:
-        sub = per_track[per_track["survived"] == mask_val]
+        sub = per_track_plot1[per_track_plot1["survived"] == mask_val]
         if sub.empty:
             continue
         fig.add_trace(go.Scatter(
@@ -1184,22 +1402,41 @@ def plot_swelling_vs_survival(tracked):
             ),
         ), row=1, col=1)
 
-    mask = np.isfinite(per_track["V0"]) & np.isfinite(per_track["V_rel_max"])
-    if mask.sum() > 2:
-        coeffs = polyfit(
-            per_track.loc[mask, "V0"],
-            per_track.loc[mask, "V_rel_max"], 1,
-        )
-        x_fit = np.linspace(
-            per_track["V0"].min(), per_track["V0"].max(), 100,
-        )
+    # --- Binned Mean and 95% CI replacing the linear fit ---
+    mask = np.isfinite(per_track_plot1["V0"]) & np.isfinite(per_track_plot1["V_rel_max"])
+    df_valid = per_track_plot1[mask].copy()
+
+    if len(df_valid) > 1:
+        bins = np.linspace(df_valid["V0"].min(), df_valid["V0"].max(), num_bins + 1)
+        df_valid["v0_bin"] = pd.cut(df_valid["V0"], bins=bins)
+        
+        bin_stats = df_valid.groupby("v0_bin", observed=False)["V_rel_max"].agg(['mean', 'std', 'count'])
+        bin_stats = bin_stats[bin_stats['count'] > 1].copy()
+        bin_stats['bin_center'] = bin_stats.index.map(lambda x: x.mid).astype(float)
+        
+        bin_stats['se'] = bin_stats['std'] / np.sqrt(bin_stats['count'])
+        bin_stats['ci_upper'] = bin_stats['mean'] + 1.96 * bin_stats['se']
+        bin_stats['ci_lower'] = bin_stats['mean'] - 1.96 * bin_stats['se']
+        
+        # Upper Bound (Invisible)
         fig.add_trace(go.Scatter(
-            x=x_fit, y=coeffs[0] + coeffs[1] * x_fit, mode="lines",
-            line=dict(color="red", dash="dash", width=1.5),
-            opacity=0.7,
-            name=f"Linear fit (slope={coeffs[1]:.2e})",
-            legendgroup="panel1",
-            hovertemplate="V(0) %{x:.2f}<br>fit %{y:.2f}<extra></extra>",
+            x=bin_stats['bin_center'], y=bin_stats['ci_upper'], mode="lines",
+            line=dict(width=0), showlegend=False, hoverinfo="skip", legendgroup="panel1"
+        ), row=1, col=1)
+
+        # Lower Bound (Fills 'tonexty')
+        fig.add_trace(go.Scatter(
+            x=bin_stats['bin_center'], y=bin_stats['ci_lower'], mode="lines",
+            fill="tonexty", fillcolor="rgba(255, 0, 0, 0.15)", line=dict(width=0),
+            name="95% CI", hoverinfo="skip", legendgroup="panel1"
+        ), row=1, col=1)
+
+        # Mean Line
+        fig.add_trace(go.Scatter(
+            x=bin_stats['bin_center'], y=bin_stats['mean'], mode="lines",
+            line=dict(color="red", dash="dash", width=2),
+            name="Binned Mean", legendgroup="panel1",
+            hovertemplate="V(0) Bin: %{x:.2f}<br>Mean Max V(t)/V(0): %{y:.2f}<extra></extra>"
         ), row=1, col=1)
 
     survived_ids = per_track.loc[per_track["survived"], "track_id"]
@@ -1222,8 +1459,9 @@ def plot_swelling_vs_survival(tracked):
         opacity=0.5, row=1, col=2,
     )
 
-    fig.update_xaxes(title_text="Initial volume V(0) (\u00b5m\u00b3)", row=1, col=1)
-    fig.update_yaxes(title_text="Max V(t) / V(0)", row=1, col=1)
+    fig.update_xaxes(title_text="Initial volume V(0) (\u00b5m\u00b3)", range=[0, 10], row=1, col=1)
+    fig.update_yaxes(title_text="Max V(t) / V(0)", range=[0, 3], row=1, col=1)
+    
     fig.update_xaxes(title_text="Frame", row=1, col=2, tickmode="array",
                      tickvals=list(range(int(cohort["frame"].min()),
                                          int(cohort["frame"].max()) + 1)))
@@ -1231,7 +1469,11 @@ def plot_swelling_vs_survival(tracked):
     fig.update_layout(
         legend=dict(groupclick="toggleitem"),
     )
-    _finalize_plotly(fig, height=520)
+    
+    if "_finalize_plotly" in globals():
+        _finalize_plotly(fig, height=520)
+    else:
+        fig.show()
 
     n_surv = per_track["survived"].sum()
     n_dis = (~per_track["survived"]).sum()
@@ -1249,7 +1491,7 @@ def plot_swelling_vs_survival(tracked):
         f"{per_track.loc[~per_track['survived'], 'V_rel_max'].median():.3f}x"
     )
 
-    per_track["lifetime"] = per_track["last_frame"] - cohort.groupby("track_id")["frame"].min().values + 1
+    per_track["lifetime"] = per_track["last_frame"] - per_track["first_frame"] + 1
     per_track["swelling_rate"] = (per_track["V_rel_max"] - 1) / per_track["lifetime"]
     surv_rate = per_track.loc[per_track["survived"], "swelling_rate"]
     dis_rate = per_track.loc[~per_track["survived"], "swelling_rate"]
@@ -2067,29 +2309,45 @@ def plot_fluorescence_vs_volume(tracked):
     _finalize_plotly(fig, height=520)
 
 
-def plot_metric_dynamics(tracked, track_stats, metric, label, color):
-    """3-panel plot: per-frame, lifespan-normalized, and outcome-split.
+def plot_metric_dynamics(tracked, track_stats, metric, label, color, min_frame=None, max_frame=None):
+    """3-panel plot: vs discrete concentrations (descending), lifespan-normalized, and outcome-split."""
 
-    Generic for any per-cell metric (CV, nNRM, etc.).
-    """
+    if min_frame is not None:
+        tracked = tracked[tracked["frame"] >= min_frame]
+    if max_frame is not None:
+        tracked = tracked[tracked["frame"] <= max_frame]
+
+    x_col = "Sucr %"
+    x_label = "Sucrose %"
 
     fig = make_subplots(
         rows=1, cols=3,
         subplot_titles=(
-            f"Population mean {label} per frame",
-            f"{label} over normalized lifespan (all tracks)",
-            f"{label} dynamics: disappeared vs. survived (all tracks)",
+            f"Population mean {label} vs {x_label}",
+            f"{label} over normalized lifespan",
+            f"{label} vs {x_label}: disappeared vs. survived",
         ),
         horizontal_spacing=0.08,
     )
 
-    per_frame = tracked.groupby("frame")[metric].agg(["mean", "sem"])
+    # --- Panel 1: Metric vs Concentration ---
+    per_conc = tracked.groupby(x_col).agg(
+        mean_metric=(metric, "mean"),
+        sem_metric=(metric, "sem"),
+        mean_frame=("frame", "mean")
+    ).sort_index(ascending=False)
+    
+    hover_texts_p1 = [f"Frame: {int(f)}<br>{x_label}: {c:.2f}%" 
+                      for f, c in zip(per_conc["mean_frame"], per_conc.index)]
+
     _add_mean_sem_band(
-        fig, per_frame.index, per_frame["mean"], per_frame["sem"],
+        fig, per_conc.index, per_conc["mean_metric"], per_conc["sem_metric"],
         color=color, name="Mean +/- SEM", legendgroup="panel1",
         row=1, col=1, y_label=label,
+        hovertext=hover_texts_p1
     )
 
+    # --- Panel 2: Normalized Lifespan ---
     n_bins = 20
     survived_ids, disappeared_ids = _survival_split(tracked)
     bin_centers = np.linspace(0.5 / n_bins, 1 - 0.5 / n_bins, n_bins)
@@ -2115,13 +2373,17 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
         norm_df["bin"] = pd.cut(norm_df["t_norm"], bins=n_bins, labels=False)
         bin_stats = norm_df.groupby("bin")[metric].agg(["mean", "sem"])
         n_tracks = norm_df["track_id"].nunique()
+        
+        valid_t_bins = bin_stats.dropna()
         _add_mean_sem_band(
-            fig, pd.Series(bin_centers, index=bin_stats.index),
-            bin_stats["mean"], bin_stats["sem"],
+            fig, pd.Series(bin_centers[valid_t_bins.index], index=valid_t_bins.index),
+            valid_t_bins["mean"], valid_t_bins["sem"],
             color=clr, name=f"{grp_label} (n={n_tracks})",
             legendgroup="panel2", row=1, col=2, y_label=label,
+            x_label="Relative lifespan"
         )
 
+    # --- Panel 3: Metric vs Concentration (Split by outcome) ---
     for grp_label, ids, clr in [
         ("Survived", survived_ids, "steelblue"),
         ("Disappeared", disappeared_ids, "tomato"),
@@ -2129,34 +2391,34 @@ def plot_metric_dynamics(tracked, track_stats, metric, label, color):
         sub = tracked[tracked["track_id"].isin(ids)]
         if sub.empty:
             continue
-        g = sub.groupby("frame")[metric].agg(["mean", "sem"])
+            
+        g = sub.groupby(x_col).agg(
+            mean_metric=(metric, "mean"),
+            sem_metric=(metric, "sem"),
+            mean_frame=("frame", "mean")
+        ).sort_index(ascending=False)
+        
+        hover_texts_p3 = [f"Frame: {int(f)}<br>{x_label}: {c:.2f}%" 
+                          for f, c in zip(g["mean_frame"], g.index)]
+        
         _add_mean_sem_band(
-            fig, g.index, g["mean"], g["sem"],
+            fig, g.index, g["mean_metric"], g["sem_metric"],
             color=clr, name=f"{grp_label} (n={len(ids)})",
             legendgroup="panel3", row=1, col=3, y_label=label,
+            hovertext=hover_texts_p3
         )
 
-    frame_ticks = list(range(int(tracked["frame"].min()),
-                             int(tracked["frame"].max()) + 1))
-    fig.update_xaxes(title_text="Frame", row=1, col=1, tickmode="array",
-                     tickvals=list(per_frame.index))
+    fig.update_xaxes(title_text=x_label, row=1, col=1, autorange="reversed")
     fig.update_yaxes(title_text=label, row=1, col=1)
-    fig.update_xaxes(title_text="Relative lifespan (0=start, 1=end)",
-                     row=1, col=2)
+    
+    fig.update_xaxes(title_text="Relative lifespan (0=start, 1=end)", row=1, col=2)
     fig.update_yaxes(title_text=label, row=1, col=2)
-    fig.update_xaxes(title_text="Frame", row=1, col=3, tickmode="array",
-                     tickvals=frame_ticks)
+    
+    fig.update_xaxes(title_text=x_label, row=1, col=3, autorange="reversed")
     fig.update_yaxes(title_text=label, row=1, col=3)
-    fig.update_layout(
-        legend=dict(groupclick="toggleitem"),
-    )
+    
+    fig.update_layout(legend=dict(groupclick="toggleitem"))
     _finalize_plotly(fig, height=500)
-
-    print(f"{label} at frame 0: {per_frame['mean'].iloc[0]:.3f}")
-    print(
-        f"{label} at frame {int(per_frame.index[-1])}: "
-        f"{per_frame['mean'].iloc[-1]:.3f}"
-    )
 
 
 def plot_initial_features_vs_lifespan(tracked, track_stats):
@@ -2220,3 +2482,439 @@ def plot_initial_features_vs_lifespan(tracked, track_stats):
 
     for title, r, p in corr_results:
         print(f"{title} vs lifetime: Spearman rho = {r:.3f}, p = {p:.2e}")
+
+
+def plot_contrast_scatter(tracked, contrast_col="Relative_Intensity"):
+    """
+    Plot a scatter of Relative Intensity vs Sucrose Concentration for all cells,
+    along with a mean trendline.
+    """
+    
+    plot_df = tracked.dropna(subset=[contrast_col, "Sucr %"]).copy()
+    
+    stats = plot_df.groupby("frame").agg(
+        mean_contrast=(contrast_col, "mean"),
+        sucr_conc=("Sucr %", "mean")
+    ).sort_values("frame")
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=plot_df["Sucr %"],
+        y=plot_df[contrast_col],
+        mode="markers",
+        marker=dict(color="rgba(100, 100, 100, 0.15)", size=4), 
+        name="Individual cells",
+        hovertemplate="Sucr: %{x:.1f}%<br>Intensity: %{y:.2f}<extra></extra>"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=stats["sucr_conc"],
+        y=stats["mean_contrast"],
+        mode="lines+markers",
+        line=dict(color="steelblue", width=3),
+        marker=dict(size=8, color="steelblue", line=dict(width=1, color="black")),
+        name="Population Mean",
+        hovertemplate="Mean Sucr: %{x:.1f}%<br>Mean Intensity: %{y:.2f}<extra></extra>"
+    ))
+
+    fig.update_layout(
+        title="Phase-Contrast Intensity vs. Sucrose Concentration",
+        xaxis=dict(title="Sucrose Concentration (%)", autorange="reversed"),
+        yaxis=dict(title="Relative Intensity (Cell vs. Background)"), 
+        hovermode="closest",
+        plot_bgcolor="white",
+        showlegend=True,
+        legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99, bgcolor="rgba(255,255,255,0.7)")
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+
+    try:
+        _finalize_plotly(fig, height=520, margin=dict(t=80, b=50, l=60, r=30))
+    except NameError:
+        fig.show()
+
+def plot_contrast_daynamic(tracked, contrast_col="Relative_Intensity"):
+    """
+    Plot a scatter of Relative Intensity vs Relative Volume for all cells,
+    along with a mean trendline.
+    """
+    
+    plot_df = tracked.dropna(subset=[contrast_col, "Sucr %"]).copy()
+    
+    stats = plot_df.groupby("frame").agg(
+        mean_contrast=(contrast_col, "mean"),
+        sucr_conc=("Sucr %", "mean")
+    ).sort_values("frame")
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=plot_df["Sucr %"],
+        y=plot_df[contrast_col],
+        mode="markers",
+        marker=dict(color="rgba(100, 100, 100, 0.15)", size=4), 
+        name="Individual cells",
+        hovertemplate="Sucr: %{x:.1f}%<br>Intensity: %{y:.2f}<extra></extra>"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=stats["sucr_conc"],
+        y=stats["mean_contrast"],
+        mode="lines+markers",
+        line=dict(color="steelblue", width=3),
+        marker=dict(size=8, color="steelblue", line=dict(width=1, color="black")),
+        name="Population Mean",
+        hovertemplate="Mean Sucr: %{x:.1f}%<br>Mean Intensity: %{y:.2f}<extra></extra>"
+    ))
+
+    fig.update_layout(
+        title="Phase-Contrast Intensity vs. Sucrose Concentration",
+        xaxis=dict(title="Sucrose Concentration (%)", autorange="reversed"),
+        yaxis=dict(title="Relative Intensity (Cell vs. Background)"), 
+        hovermode="closest",
+        plot_bgcolor="white",
+        showlegend=True,
+        legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99, bgcolor="rgba(255,255,255,0.7)")
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+
+    try:
+        _finalize_plotly(fig, height=520, margin=dict(t=80, b=50, l=60, r=30))
+    except NameError:
+        fig.show()
+
+
+def plot_radial_profile(ring_profiles_df, frame):
+    """
+    Plots an interactive radial intensity profile for a specific frame using Plotly.
+    Shows the mean intensity and a shaded region for the standard deviation.
+    """
+    df = ring_profiles_df[ring_profiles_df["frame"] == frame]
+    
+    if df.empty:
+        print(f"No data found for frame {frame}.")
+        return
+
+    agg_df = df.groupby("radius_norm")["intensity"].agg(['mean', 'std']).reset_index()
+    
+    agg_df['std'] = agg_df['std'].fillna(0)
+    upper_bound = agg_df['mean'] + agg_df['std']
+    lower_bound = agg_df['mean'] - agg_df['std']
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter(
+        x=list(agg_df["radius_norm"]) + list(agg_df["radius_norm"])[::-1],
+        y=list(upper_bound) + list(lower_bound)[::-1],
+        fill='toself',
+        fillcolor='rgba(0, 0, 139, 0.2)', 
+        line=dict(color='rgba(255,255,255,0)'),
+        hoverinfo="skip",
+        showlegend=False,
+        name='± 1 Std Dev'
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=agg_df["radius_norm"],
+        y=agg_df["mean"],
+        mode='lines+markers',
+        line=dict(color='darkblue', width=2),
+        marker=dict(size=6),
+        name='Mean Intensity',
+        hovertemplate='Radius: %{x:.2f}<br>Intensity: %{y:.3f}<extra></extra>'
+    ))
+
+    fig.update_layout(
+        title=f"Average Radial Intensity Profile | Frame {frame}",
+        xaxis_title="Normalized Radius (r / R)",
+        yaxis_title="Mean Intensity",
+        template="plotly_white",
+        hovermode="x unified",
+        width=800,
+        height=500
+    )
+    
+    fig.show()
+
+
+def plot_contrast_vs_volume_ratio(tracked, contrast_col="Relative_Intensity", num_bins=20):
+    """
+    Plot a scatter of Relative Intensity vs Volume Ratio (Current Volume / Initial Volume) 
+    for all cells, overlaid with a binned mean trendline and 95% Confidence Interval ribbon.
+    Filtered for ratios between 0.9 and 3.0.
+    """
+    
+    plot_df = tracked.dropna(subset=[contrast_col, "volume", "track_id", "frame"]).copy()
+    
+    first_obs = plot_df.sort_values("frame").groupby("track_id").first()
+    plot_df = plot_df.merge(first_obs["volume"].rename("V0"), on="track_id")
+    plot_df["volume_ratio"] = plot_df["volume"] / plot_df["V0"]
+    
+    # --- NEW FILTER ---
+    # Restrict data to ratios between 0.9 and 3
+    plot_df = plot_df[(plot_df["volume_ratio"] >= 0.9) & (plot_df["volume_ratio"] <= 3.0)].copy()
+    
+    fig = go.Figure()
+
+    # Scatter plot of individual cells
+    fig.add_trace(go.Scatter(
+        x=plot_df["volume_ratio"],
+        y=plot_df[contrast_col],
+        mode="markers",
+        marker=dict(color="rgba(100, 100, 100, 0.15)", size=4), 
+        name="Individual cells",
+        hovertemplate="Volume Ratio: %{x:.2f}<br>Intensity: %{y:.2f}<extra></extra>"
+    ))
+
+    # Filter for valid finite values to calculate the mean and CI
+    valid = np.isfinite(plot_df["volume_ratio"]) & np.isfinite(plot_df[contrast_col])
+    plot_df_valid = plot_df[valid].copy()
+
+    if len(plot_df_valid) > 1:
+        # 1. Create bins across the x-axis (now bounded between 0.9 and 3.0)
+        bins = np.linspace(plot_df_valid["volume_ratio"].min(), plot_df_valid["volume_ratio"].max(), num_bins + 1)
+        plot_df_valid["vol_ratio_bin"] = pd.cut(plot_df_valid["volume_ratio"], bins=bins)
+        
+        # 2. Calculate mean, std, and count per bin
+        bin_stats = plot_df_valid.groupby("vol_ratio_bin", observed=False)[contrast_col].agg(['mean', 'std', 'count'])
+        
+        # Drop bins with fewer than 2 data points (since standard deviation would be NaN)
+        bin_stats = bin_stats[bin_stats['count'] > 1].copy()
+        
+        # Extract the center of each bin for the x-axis
+        bin_stats['bin_center'] = bin_stats.index.map(lambda x: x.mid).astype(float)
+        
+        # Calculate 95% Confidence Interval (1.96 * Standard Error)
+        bin_stats['se'] = bin_stats['std'] / np.sqrt(bin_stats['count'])
+        bin_stats['ci_upper'] = bin_stats['mean'] + 1.96 * bin_stats['se']
+        bin_stats['ci_lower'] = bin_stats['mean'] - 1.96 * bin_stats['se']
+        
+        # 3. Add CI Ribbon Traces
+        # Upper Bound (Invisible line to anchor the fill)
+        fig.add_trace(go.Scatter(
+            x=bin_stats['bin_center'], 
+            y=bin_stats['ci_upper'], 
+            mode="lines",
+            line=dict(width=0),
+            showlegend=False,
+            hoverinfo="skip"
+        ))
+
+        # Lower Bound (Fills 'tonexty' which is the Upper Bound)
+        fig.add_trace(go.Scatter(
+            x=bin_stats['bin_center'], 
+            y=bin_stats['ci_lower'], 
+            mode="lines",
+            fill="tonexty", 
+            fillcolor="rgba(70, 130, 180, 0.3)", # Transparent steelblue
+            line=dict(width=0),
+            name="95% CI",
+            hoverinfo="skip"
+        ))
+
+        # 4. Add Mean Line Trace
+        fig.add_trace(go.Scatter(
+            x=bin_stats['bin_center'], 
+            y=bin_stats['mean'], 
+            mode="lines",
+            line=dict(color="steelblue", width=3),
+            name="Mean",
+            hovertemplate="Bin Center: %{x:.2f}<br>Mean Intensity: %{y:.2f}<extra></extra>"
+        ))
+
+    # Formatting Layout
+    fig.update_layout(
+        title="Phase-Contrast Intensity vs. Volume Ratio",
+        xaxis=dict(title="Volume Ratio (Current Volume / Initial Volume)", range=[0.85, 3.05]), # Added slight padding to range
+        yaxis=dict(title="Relative Intensity (Cell vs. Background)"), 
+        hovermode="closest",
+        plot_bgcolor="white",
+        showlegend=True,
+        legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99, bgcolor="rgba(255,255,255,0.7)")
+    )
+    
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='LightGray')
+
+    if "_finalize_plotly" in globals():
+        _finalize_plotly(fig, height=520, margin=dict(t=80, b=50, l=60, r=30))
+    else:
+        fig.show()
+
+def plot_mid_radius_burst_cells(
+    ring_profiles_df, track_stats, min_radius=0.2, max_radius=0.8
+):
+  """
+    Finds bursting cells whose pre-burst max radial intensity is between min_radius and max_radius,
+    prints their count, and plots 3 radial profile graphs:
+    1. Frame 0 (Mean ± SD)
+    2. Frame before burst (Mean ± SD)
+    3. Both mean profiles combined
+    """
+  # get just the disappeared cells
+  burst_tracks = track_stats[track_stats["disappeared"] == True][
+      "track_id"
+  ].unique()
+  burst_profiles = ring_profiles_df[
+      ring_profiles_df["track_id"].isin(burst_tracks)
+  ].copy()
+
+  if burst_profiles.empty:
+    print("No bursting tracks found in ring_profiles_df.")
+    return
+
+  # find the last frame for each cell
+  last_frames = (
+      burst_profiles.groupby("track_id")["frame"]
+      .max()
+      .rename("pre_burst_frame")
+  )
+  burst_profiles = burst_profiles.merge(last_frames, on="track_id")
+
+  # find the radius with the maximum intensity at pre_burst_frame
+  frame0_all = burst_profiles[burst_profiles["frame"] == 0]
+  max_idx = frame0_all.groupby("track_id")["intensity"].idxmax()
+  peak_radii_f0 = frame0_all.loc[max_idx, ["track_id", "radius_norm"]]
+
+  # filter the maximum intensity radius range
+  target_cells_df = peak_radii_f0[
+      (peak_radii_f0["radius_norm"] >= min_radius)
+      & (peak_radii_f0["radius_norm"] <= max_radius)
+  ]
+  target_ids = target_cells_df["track_id"].unique()
+
+  print(f"Total bursting tracks: {len(burst_tracks)}")
+  print(
+      f"Bursting cells with Frame 0 max intensity between {min_radius} and"
+      f" {max_radius}: {len(target_ids)}"
+    )
+  if len(target_ids) == 0:
+    return
+
+  # get the data for each cell from their first and last frame
+  target_profiles = burst_profiles[burst_profiles["track_id"].isin(target_ids)]
+  df_frame0 = target_profiles[target_profiles["frame"] == 0]
+  df_preburst = target_profiles[
+      target_profiles["frame"] == target_profiles["pre_burst_frame"]
+  ]
+
+  # to calculate the average and standard deviation
+  def get_agg_profile(df):
+    agg = (
+        df.groupby("radius_norm")["intensity"].agg(["mean", "std"]).reset_index()
+    )
+    agg["std"] = agg["std"].fillna(0)
+    agg["upper"] = agg["mean"] + agg["std"]
+    agg["lower"] = agg["mean"] - agg["std"]
+    return agg
+
+  agg_f0 = get_agg_profile(df_frame0)
+  agg_pb = get_agg_profile(df_preburst)
+
+  def render_plot(fig):
+    try:
+      _finalize_plotly(fig, height=500)
+    except NameError:
+      fig.show()
+
+  def plot_single_profile(agg_df, title, line_color, fill_rgba):
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=list(agg_df["radius_norm"]) + list(agg_df["radius_norm"])[::-1],
+            y=list(agg_df["upper"]) + list(agg_df["lower"])[::-1],
+            fill="toself",
+            fillcolor=fill_rgba,
+            line=dict(color="rgba(255,255,255,0)"),
+            hoverinfo="skip",
+            showlegend=False,
+            name="± 1 Std Dev",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=agg_df["radius_norm"],
+            y=agg_df["mean"],
+            mode="lines+markers",
+            line=dict(color=line_color, width=2),
+            marker=dict(size=6),
+            name="Mean Intensity",
+            hovertemplate="Radius: %{x:.2f}<br>Intensity: %{y:.3f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Normalized Radius (r / R)",
+        yaxis_title="Mean Intensity",
+        template="plotly_white",
+        hovermode="x unified",
+        width=800,
+        height=500,
+    )
+    render_plot(fig)
+
+  # --- Graph 1: Frame 0 ---
+  plot_single_profile(
+      agg_f0,
+      title=(
+          f"Radial Intensity Profile | Frame 0 (n = {len(target_ids)} burst"
+          " cells)"
+      ),
+      line_color="darkblue",
+      fill_rgba="rgba(0, 0, 139, 0.2)",
+  )
+
+  # --- Graph 2: Frame pre_burst_frame ---
+  plot_single_profile(
+      agg_pb,
+      title=(
+          f"Radial Intensity Profile | Frame Before Burst (n = {len(target_ids)}"
+          " burst cells)"
+      ),
+      line_color="crimson",
+      fill_rgba="rgba(220, 20, 60, 0.2)",
+  )
+
+  # --- Graph 3: the two graphs at the same axes ---
+  fig_combined = go.Figure()
+  fig_combined.add_trace(
+      go.Scatter(
+          x=agg_f0["radius_norm"],
+          y=agg_f0["mean"],
+          mode="lines+markers",
+          line=dict(color="darkblue", width=2.5),
+          marker=dict(size=6),
+          name="Frame 0 (Mean)",
+          hovertemplate="Radius: %{x:.2f}<br>Frame 0: %{y:.3f}<extra></extra>",
+      )
+  )
+  fig_combined.add_trace(
+      go.Scatter(
+          x=agg_pb["radius_norm"],
+          y=agg_pb["mean"],
+          mode="lines+markers",
+          line=dict(color="crimson", width=2.5),
+          marker=dict(size=6),
+          name="Before Burst (Mean)",
+          hovertemplate="Radius: %{x:.2f}<br>Before Burst: %{y:.3f}<extra></extra>",
+      )
+  )
+  fig_combined.update_layout(
+      title=(
+          "Mean Radial Profile Comparison: Frame 0 vs. Before Burst (n ="
+          f" {len(target_ids)} cells)"
+      ),
+      xaxis_title="Normalized Radius (r / R)",
+      yaxis_title="Mean Intensity",
+      template="plotly_white",
+      hovermode="x unified",
+      width=800,
+      height=500,
+      legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
+  )
+  render_plot(fig_combined)

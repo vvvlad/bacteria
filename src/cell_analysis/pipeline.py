@@ -223,44 +223,17 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
                               peri_core_rings=None):
     """Compute per-cell-per-frame nucleoid spatial-distribution metrics.
 
-    Adds three columns to *tracked*:
+    Adds metrics columns to *tracked*:
+      mean_edge_distance_norm, gaussian_sigma_norm, peri_core_asymmetry,
+      max_intensity_ring_radius (formerly fwhm_area_fraction),
+      min_intensity_ring_radius (formerly hole_depth),
+      peak_offset_norm (formerly min_ring_radius).
 
-      mean_edge_distance_norm
-          Mean distance from suprathreshold pixels to the cell-mask edge,
-          divided by R/3 where R = sqrt(area_pixels / π). Values > 1
-          indicate intensity clustered toward the cell center; < 1 toward
-          the edge.
-      gaussian_sigma_norm
-          σ of the 2D intensity-weighted spatial distribution of
-          suprathreshold pixels, divided by R. σ = sqrt of the mean of
-          eigenvalues of the weighted covariance matrix.
-      peri_core_asymmetry
-          Signed asymmetry index (I_peri - I_core) / (I_peri + I_core)
-          where I_core is the mean raw fluorescence inside an inner disk
-          and I_peri is the mean in a peripheral annulus, both defined by
-          *peri_core_rings*: a triple (core_max, peri_min, peri_max) of
-          fractions of R that give the boundaries. Default is
-          ``(0.15, 0.35, 0.55)`` — narrow core sampling the donut center
-          dip, peri bracketed to the donut peak zone identified from real
-          radial profiles (see
-          ``docs/peri_core_asymmetry_definition_history.md``). Areas are
-          unequal, so mean rather than total intensity is used. Bounded in
-          [-1, 1]: positive = edge-clustered (expanded/donut), negative =
-          center-clustered (compacted), 0 = radially uniform. Uses raw
-          intensities (no thresholding).
-
-    Threshold rule (applies only to mean_edge_distance_norm and
-    gaussian_sigma_norm): pixels with intensity > mean(cell). If the
-    cell's max/mean ratio < flat_threshold_ratio (distribution already
-    flat), fall back to intensity > 0.5 * mean.
-
-    Returns (tracked, track_stats) with the new per-cell columns in *tracked*
-    and per-track mean aggregates ``mean_edge_distance_norm``,
-    ``mean_gaussian_sigma_norm``, and ``mean_peri_core_asymmetry`` in
-    *track_stats*.
+    Returns (tracked, track_stats, ring_profiles_df)
     """
     from scipy.ndimage import find_objects
-    from .matching import (measure_nucleoid_metrics, PERI_CORE_RINGS_DEFAULT)
+    from .matching import measure_nucleoid_metrics, PERI_CORE_RINGS_DEFAULT
+    import pandas as pd
 
     if peri_core_rings is None:
         peri_core_rings = PERI_CORE_RINGS_DEFAULT
@@ -268,48 +241,73 @@ def add_nucleoid_distribution(tracked, track_stats, fluor_stack, label_stack,
     edge_vals = np.full(len(tracked), np.nan)
     sigma_vals = np.full(len(tracked), np.nan)
     asym_vals = np.full(len(tracked), np.nan)
+    max_ring_radius = np.full(len(tracked), np.nan)
+    peak_offset = np.full(len(tracked), np.nan)
+    
     labels_arr = tracked["label"].to_numpy()
+    
+    ring_profiles_records = []
+    bin_centers = np.linspace(1/(2*15), 1 - 1/(2*15), 15)
 
     by_frame = tracked.groupby("frame").indices
     for t, idx_arr in by_frame.items():
         frame_labels = label_stack[int(t)]
         fluor_frame = fluor_stack[int(t)]
         slices = find_objects(frame_labels)
+        
         for row_idx in idx_arr:
             label = int(labels_arr[row_idx])
             sl = slices[label - 1] if 0 < label <= len(slices) else None
             if sl is None:
                 continue
+            
             crop_mask = frame_labels[sl] == label
             if not crop_mask.any():
                 continue
+                
             pixels = fluor_frame[sl][crop_mask].astype(np.float64)
             if pixels.size == 0 or pixels.mean() <= 0:
                 continue
-            edge_vals[row_idx], sigma_vals[row_idx], asym_vals[row_idx] = (
-                measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio,
-                                         peri_core_rings=peri_core_rings)
-            )
+                
+            (edge_vals[row_idx], sigma_vals[row_idx], asym_vals[row_idx],
+             max_ring_radius[row_idx], peak_offset[row_idx], profile_array) = measure_nucleoid_metrics(
+                 pixels, crop_mask, flat_threshold_ratio, peri_core_rings=peri_core_rings
+             )
+
+            if profile_array is not None:
+                track_id = int(tracked["track_id"].values[row_idx])
+                for r_norm, intensity in zip(bin_centers, profile_array):
+                    ring_profiles_records.append({
+                        "frame": int(t),
+                        "track_id": track_id,
+                        "radius_norm": float(r_norm),
+                        "intensity": float(intensity)
+                    })
 
     tracked = tracked.copy()
     tracked["mean_edge_distance_norm"] = edge_vals
     tracked["gaussian_sigma_norm"] = sigma_vals
     tracked["peri_core_asymmetry"] = asym_vals
+    tracked["max_intensity_ring_radius"] = max_ring_radius 
+    tracked["peak_offset_norm"] = peak_offset
 
     track_stats = track_stats.merge(
         tracked.groupby("track_id").agg(
             mean_edge_distance_norm=("mean_edge_distance_norm", "mean"),
             mean_gaussian_sigma_norm=("gaussian_sigma_norm", "mean"),
             mean_peri_core_asymmetry=("peri_core_asymmetry", "mean"),
+            mean_max_intensity_ring_radius=("max_intensity_ring_radius", "mean"),
+            mean_peak_offset_norm=("peak_offset_norm", "mean")
         ),
         on="track_id", how="left",
     )
 
     n_valid = int(np.isfinite(edge_vals).sum())
-    print(f"Nucleoid distribution: {n_valid}/{len(tracked)} "
-          f"cell-frames measured")
+    print(f"Nucleoid distribution: {n_valid}/{len(tracked)} cell-frames measured")
 
-    return tracked, track_stats
+    ring_profiles_df = pd.DataFrame(ring_profiles_records)
+
+    return tracked, track_stats, ring_profiles_df
 
 
 def add_fluorescence_concentration(tracked):

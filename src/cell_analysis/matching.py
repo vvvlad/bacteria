@@ -78,8 +78,7 @@ def match_cells_to_nuclei(
     return pd.DataFrame(matches)
 
 
-PERI_CORE_RINGS_DEFAULT = (0.15, 0.35, 0.55)
-
+PERI_CORE_RINGS_DEFAULT = (0.45, 0.55, 0.88)
 
 def _peri_core_asymmetry(pixels, coords, R, rings=PERI_CORE_RINGS_DEFAULT):
     """Signed peri/core asymmetry index for one cell.
@@ -98,44 +97,103 @@ def _peri_core_asymmetry(pixels, coords, R, rings=PERI_CORE_RINGS_DEFAULT):
     summed mean intensity is non-positive.
     """
     core_max, peri_min, peri_max = rings
-    cy, cx = coords.mean(axis=0)
+    
+    p_min = np.percentile(pixels, 5)
+    p_max = np.percentile(pixels, 95)
+    if p_max <= p_min:
+        return np.nan
+        
+    norm_pix = np.clip((pixels - p_min) / (p_max - p_min), 0.0, 1.0)
+    bright_mask = norm_pix > 0.4
+    if not bright_mask.any():
+        return np.nan
+        
+    bright_coords = coords[bright_mask]
+    cy, cx = bright_coords.mean(axis=0)
+    
     dy = coords[:, 0] - cy
     dx = coords[:, 1] - cx
-    r2 = dy * dy + dx * dx
-    core_pix = r2 < (core_max * R) ** 2
-    peri_pix = (r2 > (peri_min * R) ** 2) & (r2 < (peri_max * R) ** 2)
+    dist = np.sqrt(dy * dy + dx * dx)
+    
+    r_norm = dist / R
+    
+    core_pix = r_norm < core_max
+    peri_pix = (r_norm > peri_min) & (r_norm < peri_max)
+    
     if not core_pix.any() or not peri_pix.any():
         return np.nan
-    m_core = float(pixels[core_pix].mean())
-    m_peri = float(pixels[peri_pix].mean())
+        
+    core_vals = norm_pix[core_pix]
+    peri_vals = norm_pix[peri_pix]
+    
+    m_core = float(core_vals.mean())
+    m_peri = float(peri_vals.mean())
+    
     total = m_core + m_peri
     if total <= 0:
         return np.nan
+        
     return (m_peri - m_core) / total
 
+
+def _compute_fwhm_and_hole(pixels, coords, R):
+    if pixels.size < 15:
+        return np.nan, np.nan, None
+
+    p_min, p_max = np.percentile(pixels, 5), np.percentile(pixels, 99)
+    if p_max <= p_min:
+        return np.nan, np.nan, None
+        
+    norm_pix = np.clip((pixels - p_min) / (p_max - p_min), 0.0, 1.0)
+
+    nuc_mask = norm_pix > 0.35
+    if nuc_mask.sum() < 8:
+        return np.nan, np.nan, None
+
+    cy, cx = coords.mean(axis=0)
+    dist = np.sqrt((coords[:, 0] - cy) ** 2 + (coords[:, 1] - cx) ** 2)
+    r_norm = dist / R 
+
+    num_bins = 15
+    bin_edges = np.linspace(0.0, 1.0, num_bins + 1)
+    best_max_r = 0.0
+    max_ring_val = -1.0
+    ring_profile = np.zeros(num_bins)
+    
+    for i in range(len(bin_edges) - 1):
+        in_ring = (r_norm >= bin_edges[i]) & (r_norm < bin_edges[i + 1])
+        if in_ring.sum() >= 2:
+            ring_intensity = float(norm_pix[in_ring].mean())
+            ring_profile[i] = ring_intensity
+            
+            if ring_intensity > max_ring_val:
+                max_ring_val = ring_intensity
+                best_max_r = 0.5 * (bin_edges[i] + bin_edges[i + 1])
+
+    top_peaks = norm_pix >= np.percentile(norm_pix[nuc_mask], 88)
+    peak_distance_from_center = float(r_norm[top_peaks & nuc_mask].mean())
+    
+    return float(best_max_r), float(peak_distance_from_center), ring_profile
 
 def measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio,
                              peri_core_rings=PERI_CORE_RINGS_DEFAULT):
     """Per-cell nucleoid spatial-distribution metrics.
 
-    Returns a triple ``(edge_norm, sigma_norm, asym)``. Any element may be
-    np.nan if that specific metric could not be computed for this cell.
-
-    See :func:`cell_analysis.pipeline.add_nucleoid_distribution` for the
-    metric definitions and threshold rule.
+    Returns a tuple: (edge_norm, sigma_norm, asym, max_ring_radius, peak_offset, ring_profile).
+    Any element may be np.nan if that specific metric could not be computed for this cell.
     """
     R = np.sqrt(crop_mask.sum() / np.pi)
     coords = np.argwhere(crop_mask)
+    
     asym = _peri_core_asymmetry(pixels, coords, R, rings=peri_core_rings)
+    fwhm_val, hole_val, ring_profile = _compute_fwhm_and_hole(pixels, coords, R)
 
     cell_mean = pixels.mean()
-    if pixels.max() / cell_mean < flat_threshold_ratio:
-        threshold = 0.5 * cell_mean
-    else:
-        threshold = cell_mean
+    threshold = 0.5 * pixels.max()
+    
     keep = pixels > threshold
     if not keep.any():
-        return np.nan, np.nan, asym
+        return np.nan, np.nan, asym, fwhm_val, hole_val, ring_profile
 
     edt = ndimage.distance_transform_edt(crop_mask)
     edt_vals = edt[crop_mask][keep]
@@ -145,7 +203,8 @@ def measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio,
     weights = pixels[keep]
     wsum = weights.sum()
     if wsum <= 0:
-        return edge_norm, np.nan, asym
+        return edge_norm, np.nan, asym, fwhm_val, hole_val, ring_profile
+        
     cy = (kept_coords[:, 0] * weights).sum() / wsum
     cx = (kept_coords[:, 1] * weights).sum() / wsum
     dy = kept_coords[:, 0] - cy
@@ -158,8 +217,7 @@ def measure_nucleoid_metrics(pixels, crop_mask, flat_threshold_ratio,
     sigma = float(np.sqrt(max(0.0, eigvals.mean())))
     sigma_norm = sigma / R
 
-    return edge_norm, sigma_norm, asym
-
+    return edge_norm, sigma_norm, asym, fwhm_val, hole_val, ring_profile
 
 def measure_fluorescence(
     fluor_stack: np.ndarray,
