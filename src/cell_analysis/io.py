@@ -70,25 +70,142 @@ def save_results(df, path: str | Path) -> None:
     df.to_csv(path, index=False)
 
 
+def _inject_html_toc(html_content: str) -> str:
+  """Inject a clickable Table of Contents after the main <h1> title."""
+  import copy
+  from bs4 import BeautifulSoup
+
+  soup = BeautifulSoup(html_content, "html.parser")
+  headers = soup.find_all(["h2", "h3"])
+  if not headers:
+    return html_content
+
+  toc_items: list[str] = []
+  for idx, h in enumerate(headers):
+    sec_id = h.get("id") or f"report-sec-{idx}"
+    h["id"] = sec_id
+
+    # Strip Jupyter's pilcrow ('¶') anchor link while preserving inline math/code
+    h_clean = copy.copy(h)
+    for anchor in h_clean.find_all("a", class_="anchor-link"):
+      anchor.decompose()
+    inner_html = "".join(str(c) for c in h_clean.contents).strip()
+
+    css_class = "toc-sub" if h.name == "h3" else "toc-main"
+    toc_items.append(
+        f'<li class="{css_class}"><a href="#{sec_id}">{inner_html}</a></li>'
+    )
+
+  toc_block = f"""
+    <style>
+        html {{ scroll-behavior: smooth; }}
+        #report-toc {{
+            background: #f8fafc;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 16px 22px;
+            margin: 18px 0 28px 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }}
+        #report-toc h4 {{
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            color: #0f172a;
+            border-bottom: 1px solid #e2e8f0;
+            padding-bottom: 6px;
+        }}
+        #report-toc ul {{
+            list-style: none;
+            padding: 0;
+            margin: 0;
+            column-count: 2;
+            column-gap: 32px;
+        }}
+        @media (max-width: 850px) {{
+            #report-toc ul {{ column-count: 1; }}
+        }}
+        #report-toc li {{
+            break-inside: avoid;
+            margin-bottom: 5px;
+            line-height: 1.4;
+        }}
+        #report-toc li.toc-main {{
+            font-weight: 600;
+            margin-top: 8px;
+            font-size: 14px;
+        }}
+        #report-toc li.toc-sub {{
+            padding-left: 16px;
+            font-size: 13px;
+        }}
+        #report-toc a {{
+            color: #1d4ed8;
+            text-decoration: none;
+        }}
+        #report-toc a:hover {{
+            text-decoration: underline;
+            color: #1e3a8a;
+        }}
+        #back-to-top {{
+            position: fixed;
+            bottom: 20px;
+            right: 24px;
+            background: #1e293b;
+            color: #ffffff;
+            padding: 8px 14px;
+            border-radius: 20px;
+            font-size: 13px;
+            text-decoration: none;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+            z-index: 9999;
+        }}
+        #back-to-top:hover {{ background: #334155; }}
+        @media print {{
+            #back-to-top {{ display: none; }}
+        }}
+    </style>
+    <nav id="report-toc">
+        <h4>Table of Contents</h4>
+        <ul>
+            {''.join(toc_items)}
+        </ul>
+    </nav>
+    <a id="back-to-top" href="#report-toc">↑ Top</a>
+    """
+
+  toc_fragment = BeautifulSoup(toc_block, "html.parser")
+  first_h1 = soup.find("h1")
+  if first_h1:
+    first_h1.insert_after(toc_fragment)
+  elif soup.body:
+    soup.body.insert(0, toc_fragment)
+
+  return str(soup)
+
+
 def export_notebook_html(
     notebook_path: str | Path,
     output_path: str | Path,
+    *,
+    include_toc: bool = True,
 ) -> Path:
-    """Export an executed notebook to a self-contained HTML file."""
-    import nbformat
-    from nbconvert import HTMLExporter
+  """Export an executed notebook to a self-contained HTML file."""
+  import nbformat
+  from nbconvert import HTMLExporter
 
-    exporter = HTMLExporter(
-        exclude_input=True,
-        exclude_input_prompt=True,
-        exclude_output_prompt=True,
-    )
-    nb = nbformat.read(notebook_path, as_version=4)
-    body, _ = exporter.from_notebook_node(nb)
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(body, encoding="utf-8")
-    return output_path
+  exporter = HTMLExporter(
+      exclude_input=True,
+      exclude_input_prompt=True,
+      exclude_output_prompt=True,
+  )
+  nb = nbformat.read(notebook_path, as_version=4)
+  body, _ = exporter.from_notebook_node(nb)
+  if include_toc:
+    body = _inject_html_toc(body)
+  output_path = Path(output_path)
+  output_path.parent.mkdir(parents=True, exist_ok=True)
+  output_path.write_text(body, encoding="utf-8")
+  return output_path
 
 
 def save_summary(data: dict, path: str | Path) -> None:

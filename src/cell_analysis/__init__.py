@@ -77,4 +77,6 @@ from .plotting import (
     plot_contrast_vs_volume_ratio as plot_contrast_vs_volume_ratio,
     plot_tension_by_survival as plot_tension_by_survival,
     plot_mid_radius_burst_cells as plot_mid_radius_burst_cells,
+    plot_max_radius_vs_volume as plot_max_radius_vs_volume,
+    plot_max_radius_histograms as plot_max_radius_histograms,
 )

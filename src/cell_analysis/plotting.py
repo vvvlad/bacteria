@@ -47,11 +47,17 @@ PLOT_SOURCES: dict[str, list[str]] = {
     "plot_tension_by_survival": ["tracked_cells.csv", "track_statistics.csv"],
     "plot_tension_comparison": ["tracked_cells.csv", "track_statistics.csv", "tracked_cells.csv", "track_statistics.csv"],
     "plot_contrast_scatter": ["tracked_cells.csv"],
-    "plot_radial_profile": ["ring_profiles_df"],
+    "plot_radial_profile": ["ring_profiles.csv"],
     "plot_contrast_vs_volume_ratio": ["tracked_cells.csv"],
-    "plot_radial_profile": ["ring_profiles_df"],
+    "plot_radial_profile": ["ring_profiles.csv"],
     "plot_contrast_vs_volume_ratio": ["tracked_cells.csv"],
-    "plot_mid_radius_burst_cells": ["ring_profiles_df", "track_statistics.csv"],
+    "plot_mid_radius_burst_cells": ["ring_profiles.csv", "track_statistics.csv", "tracked_cells.csv"],
+    "plot_max_radius_vs_volume": [
+    "ring_profiles.csv",
+    "tracked_cells.csv",
+    "track_statistics.csv",
+    ],
+    "plot_max_radius_histograms": ["ring_profiles.csv", "track_statistics.csv"],
 }
 
 
@@ -309,7 +315,7 @@ def plot_frame_gating(diagnostics, bad_frames):
             hovertemplate="Frame %{x}<br>Count %{y}<extra>Dropped</extra>",
         ))
     fig.update_layout(
-        title="Detection count per frame (red = dropped)",
+        title="Cells detected vs Frame number (red = dropped)",
         xaxis=dict(title="Frame", tickmode="array",
                    tickvals=list(diagnostics["frame"])),
         yaxis=dict(title="Cell count"),
@@ -2747,16 +2753,21 @@ def plot_contrast_vs_volume_ratio(tracked, contrast_col="Relative_Intensity", nu
         fig.show()
 
 def plot_mid_radius_burst_cells(
-    ring_profiles_df, track_stats, min_radius=0.2, max_radius=0.8
+    ring_profiles_df,
+    track_stats,
+    tracked_df=None,
+    min_radius=0.2,
+    max_radius=0.8,
 ):
   """
-    Finds bursting cells whose pre-burst max radial intensity is between min_radius and max_radius,
-    prints their count, and plots 3 radial profile graphs:
-    1. Frame 0 (Mean ± SD)
-    2. Frame before burst (Mean ± SD)
-    3. Both mean profiles combined
+    Finds bursting cells whose Frame 0 max radial intensity is between min_radius and max_radius,
+    prints their count, and plots 4 graphs for the subpopulation:
+    1. Radial intensity profile at Frame 0 (Mean ± SD)
+    2. Radial intensity profile at Frame before burst (Mean ± SD)
+    3. Both mean radial profiles combined
+    4. Population mean Max-Intensity Ring Radius (± SEM) vs. Sucrose %
     """
-  # get just the disappeared cells
+  # Filter for disappeared (bursting) tracks only
   burst_tracks = track_stats[track_stats["disappeared"] == True][
       "track_id"
   ].unique()
@@ -2768,7 +2779,7 @@ def plot_mid_radius_burst_cells(
     print("No bursting tracks found in ring_profiles_df.")
     return
 
-  # find the last frame for each cell
+  # Find the last tracked frame for each bursting cell
   last_frames = (
       burst_profiles.groupby("track_id")["frame"]
       .max()
@@ -2776,12 +2787,12 @@ def plot_mid_radius_burst_cells(
   )
   burst_profiles = burst_profiles.merge(last_frames, on="track_id")
 
-  # find the radius with the maximum intensity at pre_burst_frame
+  # Find the radius with maximum intensity at Frame 0
   frame0_all = burst_profiles[burst_profiles["frame"] == 0]
-  max_idx = frame0_all.groupby("track_id")["intensity"].idxmax()
+  max_idx = frame0_all.groupby("track_id")["intensity"].idxmax().dropna()
   peak_radii_f0 = frame0_all.loc[max_idx, ["track_id", "radius_norm"]]
 
-  # filter the maximum intensity radius range
+  # Filter tracks whose Frame 0 peak radius falls within [min_radius, max_radius]
   target_cells_df = peak_radii_f0[
       (peak_radii_f0["radius_norm"] >= min_radius)
       & (peak_radii_f0["radius_norm"] <= max_radius)
@@ -2792,18 +2803,20 @@ def plot_mid_radius_burst_cells(
   print(
       f"Bursting cells with Frame 0 max intensity between {min_radius} and"
       f" {max_radius}: {len(target_ids)}"
-    )
+  )
   if len(target_ids) == 0:
     return
 
-  # get the data for each cell from their first and last frame
-  target_profiles = burst_profiles[burst_profiles["track_id"].isin(target_ids)]
+  # Extract profiles for the filtered subpopulation at Frame 0 and Pre-Burst Frame
+  target_profiles = burst_profiles[
+      burst_profiles["track_id"].isin(target_ids)
+  ].copy()
   df_frame0 = target_profiles[target_profiles["frame"] == 0]
   df_preburst = target_profiles[
       target_profiles["frame"] == target_profiles["pre_burst_frame"]
   ]
 
-  # to calculate the average and standard deviation
+  # Calculate mean and standard deviation across cells for each radial bin
   def get_agg_profile(df):
     agg = (
         df.groupby("radius_norm")["intensity"].agg(["mean", "std"]).reset_index()
@@ -2880,7 +2893,7 @@ def plot_mid_radius_burst_cells(
       fill_rgba="rgba(220, 20, 60, 0.2)",
   )
 
-  # --- Graph 3: the two graphs at the same axes ---
+  # --- Graph 3: Combined mean profiles ---
   fig_combined = go.Figure()
   fig_combined.add_trace(
       go.Scatter(
@@ -2918,3 +2931,308 @@ def plot_mid_radius_burst_cells(
       legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
   )
   render_plot(fig_combined)
+
+  # --- Graph 4: Population mean Max-Intensity Ring Radius vs. Sucrose % ---
+  sucrose_col = "Sucr %"
+
+  if sucrose_col not in target_profiles.columns:
+    if tracked_df is not None and sucrose_col in tracked_df.columns:
+      frame_sucrose = tracked_df[["frame", sucrose_col]].drop_duplicates(
+          "frame"
+      )
+      target_profiles = target_profiles.merge(
+          frame_sucrose, on="frame", how="left"
+      )
+    else:
+      print(
+          f"Warning: '{sucrose_col}' column not found. Pass tracked_cells to"
+          " tracked_df."
+      )
+      return
+
+  # Compute Max-Intensity Ring Radius per cell per frame for the subpopulation
+  idx_max_all = (
+      target_profiles.groupby(["track_id", "frame"])["intensity"]
+      .idxmax()
+      .dropna()
+  )
+  subpop_max_radii = target_profiles.loc[
+      idx_max_all, ["track_id", "frame", "radius_norm", sucrose_col]
+  ]
+
+  # Aggregate mean and SEM per frame (matching the left panel layout in 3.5e)
+  sucrose_agg = (
+      subpop_max_radii.groupby(["frame", sucrose_col])["radius_norm"]
+      .agg(["mean", "sem"])
+      .reset_index()
+      .sort_values("frame")
+  )
+  sucrose_agg["sem"] = sucrose_agg["sem"].fillna(0)
+  sucrose_agg["upper"] = sucrose_agg["mean"] + sucrose_agg["sem"]
+  sucrose_agg["lower"] = sucrose_agg["mean"] - sucrose_agg["sem"]
+
+  fig_sucrose = go.Figure()
+  fig_sucrose.add_trace(
+      go.Scatter(
+          x=list(sucrose_agg[sucrose_col])
+          + list(sucrose_agg[sucrose_col])[::-1],
+          y=list(sucrose_agg["upper"]) + list(sucrose_agg["lower"])[::-1],
+          fill="toself",
+          fillcolor="rgba(255, 127, 14, 0.2)",
+          line=dict(color="rgba(255,255,255,0)"),
+          hoverinfo="skip",
+          showlegend=False,
+          name="± 1 SEM",
+      )
+  )
+  fig_sucrose.add_trace(
+      go.Scatter(
+          x=sucrose_agg[sucrose_col],
+          y=sucrose_agg["mean"],
+          mode="lines+markers",
+          line=dict(color="#ff7f0e", width=2.5),
+          marker=dict(size=6),
+          name="Mean ± SEM",
+          hovertemplate=(
+              "Sucrose: %{x:.1f}%<br>Max-Intensity Radius:"
+              " %{y:.3f}<extra></extra>"
+          ),
+      )
+  )
+  fig_sucrose.update_layout(
+      title=(
+          "Population mean Max-Intensity Ring Radius vs Sucrose % (n ="
+          f" {len(target_ids)} burst cells)"
+      ),
+      xaxis=dict(title="Sucrose Concentration (%)", autorange="reversed"),
+      yaxis_title="Max-Intensity Ring Radius",
+      template="plotly_white",
+      hovermode="x unified",
+      width=800,
+      height=500,
+  )
+  render_plot(fig_sucrose)
+
+
+def plot_max_radius_vs_volume(ring_profiles_df, tracked, track_stats=None):
+  """
+    Plots the Max-Intensity Ring Radius (r / R) vs. Cell Volume (µm³) across
+    all tracked cell-frame observations, colored by cell fate if track_stats is provided.
+    """
+  valid_profiles = ring_profiles_df.dropna(subset=["intensity"]).copy()
+  if valid_profiles.empty:
+    print("No valid intensity profiles found.")
+    return
+
+  # 1. Find the normalized radius of maximum intensity for each (track_id, frame)
+  max_idx = valid_profiles.groupby(["track_id", "frame"])["intensity"].idxmax()
+  peak_df = valid_profiles.loc[
+      max_idx, ["track_id", "frame", "radius_norm", "intensity"]
+  ].rename(
+      columns={"radius_norm": "max_radius", "intensity": "peak_intensity"}
+  )
+
+  # 2. Merge with tracked data to get cell volume
+  merged = peak_df.merge(
+      tracked[["track_id", "frame", "volume"]],
+      on=["track_id", "frame"],
+      how="inner",
+  )
+  merged["volume"] = pd.to_numeric(merged["volume"], errors="coerce")
+  merged = merged[merged["volume"] > 0].copy()
+
+  if merged.empty:
+    print("No overlapping observations with valid volume found.")
+    return
+
+  fig = go.Figure()
+
+  # 3. Color by Burst vs. Survived if track_stats is provided
+  if track_stats is not None and "disappeared" in track_stats.columns:
+    burst_ids = set(track_stats[track_stats["disappeared"] == True]["track_id"])
+    merged["fate"] = np.where(
+        merged["track_id"].isin(burst_ids), "Burst", "Survived"
+    )
+
+    for label, color in [("Survived", "steelblue"), ("Burst", "crimson")]:
+      sub = merged[merged["fate"] == label]
+      if sub.empty:
+        continue
+
+      fig.add_trace(
+          go.Scatter(
+              x=sub["volume"],
+              y=sub["max_radius"],
+              mode="markers",
+              name=f"{label} ({sub['track_id'].nunique()} tracks)",
+              marker=dict(
+                  size=6,
+                  color=color,
+                  opacity=0.5,
+                  line=dict(width=0.5, color="black"),
+              ),
+              customdata=sub[["track_id", "frame", "peak_intensity"]],
+              hovertemplate=(
+                  f"<b>{label}</b><br>"
+                  "Track ID: %{customdata[0]}<br>"
+                  "Frame: %{customdata[1]}<br>"
+                  "Volume: %{x:.1f} µm³<br>"
+                  "Max-Intensity Radius: %{y:.2f}<br>"
+                  "Peak Intensity: %{customdata[2]:.3f}<extra></extra>"
+              ),
+          )
+      )
+  else:
+    fig.add_trace(
+        go.Scatter(
+            x=merged["volume"],
+            y=merged["max_radius"],
+            mode="markers",
+            name="Observations",
+            marker=dict(
+                size=6,
+                color=merged["frame"],
+                colorscale="Viridis",
+                showscale=True,
+                colorbar=dict(title="Frame"),
+                opacity=0.6,
+            ),
+            customdata=merged[["track_id", "frame", "peak_intensity"]],
+            hovertemplate=(
+                "Track ID: %{customdata[0]}<br>"
+                "Frame: %{customdata[1]}<br>"
+                "Volume: %{x:.1f} µm³<br>"
+                "Max-Intensity Radius: %{y:.2f}<br>"
+                "Peak Intensity: %{customdata[2]:.3f}<extra></extra>"
+            ),
+        )
+    )
+
+  fig.update_layout(
+      title="Max-Intensity Ring Radius vs. Cell Volume",
+      xaxis_title="Cell Volume (µm³)",
+      yaxis_title="Max-Intensity Normalized Radius (r / R)",
+      yaxis=dict(range=[-0.05, 1.05]),
+      template="plotly_white",
+      width=850,
+      height=550,
+      legend=dict(yanchor="top", y=0.99, xanchor="right", x=0.99),
+  )
+
+  try:
+    _finalize_plotly(fig, height=550)
+  except NameError:
+    fig.show()
+
+
+def plot_max_radius_histograms(ring_profiles_df, track_stats):
+  """
+    Plots side-by-side probability-density histograms of the Max-Intensity Normalized Radius (r_max / R)
+    for bursting cells (disappeared == True) at Frame 0 vs. their final Pre-Burst Frame.
+    """
+  # Find the normalized radius of peak fluorescence intensity per cell per frame
+  idx_max = (
+      ring_profiles_df.groupby(["track_id", "frame"])["intensity"]
+      .idxmax()
+      .dropna()
+  )
+  max_radii = ring_profiles_df.loc[
+      idx_max, ["track_id", "frame", "radius_norm"]
+  ].copy()
+
+  # Filter for disappeared (bursting) tracks only
+  burst_ids = track_stats[track_stats["disappeared"] == True][
+      "track_id"
+  ].unique()
+  burst_tracks = max_radii[max_radii["track_id"].isin(burst_ids)]
+
+  if burst_tracks.empty:
+    print("No bursting tracks found in ring_profiles_df.")
+    return
+
+  # Extract peak radius distributions at Frame 0 and at each cell's last pre-burst frame
+  r_frame0 = burst_tracks[burst_tracks["frame"] == 0]["radius_norm"]
+  last_frames = burst_tracks.groupby("track_id")["frame"].max().reset_index()
+  r_pre_burst = burst_tracks.merge(last_frames, on=["track_id", "frame"])[
+      "radius_norm"
+  ]
+
+  # 15 concentric bins matching the radial profile resolution
+  xbins = dict(start=0.0, end=1.0, size=1.0 / 15)
+
+  fig = make_subplots(
+      rows=1,
+      cols=2,
+      shared_yaxes=True,
+      horizontal_spacing=0.08,
+      subplot_titles=(
+          f"Frame 0 (n = {len(r_frame0)})",
+          f"Pre-Burst Frame (n = {len(r_pre_burst)})",
+      ),
+  )
+
+  # Left panel: Frame 0
+  fig.add_trace(
+      go.Histogram(
+          x=r_frame0,
+          name="Frame 0",
+          histnorm="probability density",
+          xbins=xbins,
+          opacity=0.85,
+          marker_color="darkblue",
+          hovertemplate=(
+              "Radius (r/R): %{x:.2f}<br>Frame 0 Density:"
+              " %{y:.3f}<extra></extra>"
+          ),
+      ),
+      row=1,
+      col=1,
+  )
+
+  # Right panel: Pre-Burst Frame
+  fig.add_trace(
+      go.Histogram(
+          x=r_pre_burst,
+          name="Pre-Burst Frame",
+          histnorm="probability density",
+          xbins=xbins,
+          opacity=0.85,
+          marker_color="crimson",
+          hovertemplate=(
+              "Radius (r/R): %{x:.2f}<br>Pre-Burst Density:"
+              " %{y:.3f}<extra></extra>"
+          ),
+      ),
+      row=1,
+      col=2,
+  )
+
+  fig.update_xaxes(
+      title_text="Max-Intensity Normalized Radius (r / R)",
+      range=[0, 1],
+      row=1,
+      col=1,
+  )
+  fig.update_xaxes(
+      title_text="Max-Intensity Normalized Radius (r / R)",
+      range=[0, 1],
+      row=1,
+      col=2,
+  )
+  fig.update_yaxes(title_text="Density", row=1, col=1)
+
+  fig.update_layout(
+      title=(
+          "Distribution of Max-Intensity Normalized Radius (r_max / R) —"
+          " Frame 0 vs. Pre-Burst"
+      ),
+      template="plotly_white",
+      showlegend=False,
+      width=1000,
+      height=500,
+  )
+
+  try:
+    _finalize_plotly(fig, height=500)
+  except NameError:
+    fig.show()
